@@ -19,6 +19,7 @@ from app.evals.repeat import format_spread, repeat_spread
 from app.evals.runner import execute_run
 from app.evals.store import SCHEMA, connect, find_default_baseline, list_runs
 from app.golden.models import Difficulty
+from app.schemas import Category
 from tests.conftest import VALID_PROMPT
 from tests.golden_fixtures import fixture_case, fixture_dataset, write_json
 from tests.test_evals import RUBRIC, classifier_reply, fake_client, judge_reply, make_case, make_info
@@ -92,9 +93,9 @@ def test_deltas():
     ])
     cmp = compare_runs(base, cand)
     assert cmp.strict.change == -0.5 and cmp.strict_drop_pp == 50.0
-    assert cmp.by_category["technical"].strict.change == -1.0
-    assert cmp.by_category["billing"].strict.change == 0.0
-    assert cmp.by_category["general"].strict.change is None  # no cases
+    assert cmp.by_category[Category.TECHNICAL].strict.change == -1.0
+    assert cmp.by_category[Category.BILLING].strict.change == 0.0
+    assert cmp.by_category[Category.GENERAL].strict.change is None  # no cases
     assert cmp.by_difficulty[Difficulty.HARD].strict.change == -1.0
     assert cmp.judge_score.change == -1.5
     assert (cmp.latency_p50_ms.change, cmp.latency_p95_ms.change) == (200.0, 300.0)
