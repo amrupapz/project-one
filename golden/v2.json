@@ -1,0 +1,163 @@
+{
+  "dataset_version": "v2",
+  "created_at": "2026-11-25T00:00:00Z",
+  "description": "HELD-OUT set (separate from golden/v1.json) for checking prompt changes tuned on the main set. Do not tune prompts on these cases.",
+  "cases": [
+    {
+      "id": "case_001",
+      "input": "Subject: Charged twice for my annual subscription\nHi, I checked my bank statement this morning and noticed two charges of $79.99 from your company on November 18. I only purchased one annual subscription. Could you please refund the duplicate charge?",
+      "expected_category": "billing",
+      "acceptable_categories": [],
+      "ideal_summary": "The customer was charged $79.99 twice for one annual subscription and wants the duplicate refunded.",
+      "expected_difficulty": "easy",
+      "tags": [],
+      "notes": "Clear duplicate charge with a refund request."
+    },
+    {
+      "id": "case_002",
+      "input": "Subject: app keeps crashing\neverytime i try to export a photo on my iphone the app just closes. already tried reinstalling and restarting my phone. still doesnt work pls help",
+      "expected_category": "technical",
+      "acceptable_categories": [],
+      "ideal_summary": "The iPhone app closes every time the customer exports a photo, even after reinstalling and restarting.",
+      "expected_difficulty": "easy",
+      "tags": [
+        "typos",
+        "lowercase"
+      ],
+      "notes": "Clear crash report with troubleshooting already tried."
+    },
+    {
+      "id": "case_003",
+      "input": "Subject: Changing my registered email address\nHello, I originally signed up using my university email address, which will be deactivated next month. Could you please help me change my registered email to my personal one without losing my saved projects? Thank you for your assistance.",
+      "expected_category": "account",
+      "acceptable_categories": [],
+      "ideal_summary": "The customer wants to change their registered email from a soon-to-be-deactivated university address without losing saved projects.",
+      "expected_difficulty": "easy",
+      "tags": [],
+      "notes": "Clear account email change request."
+    },
+    {
+      "id": "case_004",
+      "input": "Subject: Editing multiple photos at once\nIs there a way to apply the same colour adjustments to 50 photos without having to edit each one individually?",
+      "expected_category": "general",
+      "acceptable_categories": [],
+      "ideal_summary": "The customer asks whether the same colour adjustments can be applied to many photos at once.",
+      "expected_difficulty": "easy",
+      "tags": [
+        "short"
+      ],
+      "notes": "How-to / feature question, nothing is broken."
+    },
+    {
+      "id": "case_005",
+      "input": "Subject: Request for monthly invoices\nHi there, I use your software for my freelance photography business and need copies of my invoices from June through October for tax purposes. Could you send them over as PDFs?",
+      "expected_category": "billing",
+      "acceptable_categories": [],
+      "ideal_summary": "A freelance photographer needs PDF invoices for June through October for tax purposes.",
+      "expected_difficulty": "easy",
+      "tags": [],
+      "notes": "Invoice request is billing."
+    },
+    {
+      "id": "case_006",
+      "input": "Subject: My account is still being charged\nI CANCELLED MY SUBSCRIPTION THREE MONTHS AGO. Why are you STILL taking money out of my bank account? This is ridiculous. I want my money back for all three months. I shouldn't have to chase you every month over this.",
+      "expected_category": "billing",
+      "acceptable_categories": [],
+      "ideal_summary": "The customer cancelled three months ago, is still being charged, and wants all three months refunded.",
+      "expected_difficulty": "medium",
+      "tags": [
+        "angry",
+        "keyword_trap"
+      ],
+      "notes": "Trap: 'My account' in the subject, but the issue is charges after cancelling and a refund request."
+    },
+    {
+      "id": "case_007",
+      "input": "Subject: Is the background removal tool broken?\nI might be doing something wrong here. I'm pretty new to photo editing and I'm trying to remove the background from a picture of my dog, but I don't understand which parts I'm supposed to highlight. Am I meant to select the dog or everything around it? A step-by-step guide would be really helpful.",
+      "expected_category": "general",
+      "acceptable_categories": [],
+      "ideal_summary": "A beginner asks how to use the background removal tool and which part of the photo to select.",
+      "expected_difficulty": "medium",
+      "tags": [
+        "keyword_trap",
+        "how_to"
+      ],
+      "notes": "Trap: 'broken' in the subject, but the customer says they may be doing it wrong and wants a how-to guide."
+    },
+    {
+      "id": "case_008",
+      "input": "Subject: Premium subscription and slow editing\nI've been a paying subscriber for nearly two years and generally love the desktop app. However, since the latest update, adjusting brightness or contrast takes several seconds to show up on screen. It used to be almost instant. I'm working with the same camera and file sizes as before, so I don't think that's the issue. I even upgraded my RAM recently. Is there a setting I can change to get the previous performance back?",
+      "expected_category": "technical",
+      "acceptable_categories": [],
+      "ideal_summary": "Since the latest update, brightness and contrast adjustments on the desktop app are slow, and the customer wants the old performance back.",
+      "expected_difficulty": "medium",
+      "tags": [
+        "keyword_trap",
+        "performance"
+      ],
+      "notes": "Trap: 'Premium subscription' in the subject, but the issue is a performance regression after an update."
+    },
+    {
+      "id": "case_009",
+      "input": "Subject: subscription email adress\nhi i bought the yearly plan using my old gmail but i cant remember the password for that email anymore. the subscription itself is fine i just need to get back into my profile. is there another way to verify its me?",
+      "expected_category": "account",
+      "acceptable_categories": [],
+      "ideal_summary": "The customer cannot recall the password for the old email on their account and needs another way to verify identity and regain access to their profile.",
+      "expected_difficulty": "medium",
+      "tags": [
+        "keyword_trap",
+        "typos",
+        "lowercase"
+      ],
+      "notes": "Trap: 'subscription' in the subject, but the customer says the subscription is fine and needs profile access."
+    },
+    {
+      "id": "case_010",
+      "input": "Subject: Paid for premium but features are locked\nI upgraded to the annual plan yesterday through the Android app. Google Play shows that my payment went through, but all the premium editing tools are still locked. Whenever I try to restore purchases, I get an error saying something went wrong. Can you look into this? I'd really like to use the features I've paid for.",
+      "expected_category": "technical",
+      "acceptable_categories": [
+        "technical",
+        "billing"
+      ],
+      "ideal_summary": "The customer paid for the annual plan on Android but premium tools remain locked and restore purchases errors out.",
+      "expected_difficulty": "hard",
+      "tags": [
+        "paid_feature_broken",
+        "ambiguous"
+      ],
+      "notes": "Paid but feature not unlocked with a restore error: the fix is technical, but billing is defensible. Similar to a v3 rule, so weak as a held-out test."
+    },
+    {
+      "id": "case_011",
+      "input": "Subject: Delete my account and cancel renewal\nHi, I've decided to stop using your app. Could you permanently delete my account, including all my uploaded photos and saved projects? Also, please cancel my annual subscription before it renews next week. I couldn't find where to do either of these things in the desktop app.",
+      "expected_category": "account",
+      "acceptable_categories": [
+        "account",
+        "billing"
+      ],
+      "ideal_summary": "The customer wants their account and data permanently deleted and the annual subscription cancelled before next week's renewal.",
+      "expected_difficulty": "hard",
+      "tags": [
+        "multi_request",
+        "ambiguous"
+      ],
+      "notes": "Two requests: account deletion (account) and cancelling renewal (billing). Deletion is the main request."
+    },
+    {
+      "id": "case_012",
+      "input": "Subject: RAW files from my new camera won't open\nI recently bought a Fujifilm X-T5 and wanted to use your desktop software to edit the RAW files. Every time I import one, the app says the file format is unsupported. JPEGs from the same camera open perfectly fine. I'm not sure whether your software supports this camera yet or whether there's something wrong with my installation. If it's not supported, are there any plans to add compatibility soon?",
+      "expected_category": "general",
+      "acceptable_categories": [
+        "general",
+        "technical"
+      ],
+      "ideal_summary": "The customer's Fujifilm X-T5 RAW files are reported as unsupported on import, and they ask whether the camera is supported or will be.",
+      "expected_difficulty": "hard",
+      "tags": [
+        "ambiguous",
+        "product_question"
+      ],
+      "notes": "Mainly a support/roadmap question, but could be a bug. Near-duplicate of case_016 in the main dataset."
+    }
+  ]
+}
