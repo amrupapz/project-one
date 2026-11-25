@@ -104,7 +104,7 @@
       "input": "refund please",
       "expected_category": "billing",
       "ideal_summary": "The customer asks for a refund without giving details.",
-      "expected_difficulty": "medium",
+      "expected_difficulty": "easy",
       "tags": [
         "very_short"
       ],
@@ -126,14 +126,14 @@
     {
       "id": "case_012",
       "input": "hey i paid for premuim like 2 days ago n its still showing me ads whats up with that",
-      "expected_category": "billing",
+      "expected_category": "technical",
       "ideal_summary": "The customer paid for premium two days ago but still sees ads.",
       "expected_difficulty": "hard",
       "tags": [
         "typo",
         "ambiguous"
       ],
-      "notes": "Paid but not receiving what was paid for. Billing chosen because the payment/entitlement is the issue; technical or account are defensible."
+      "notes": "Paid for premium but still sees ads. The customer is not disputing a charge; they want the product to work as paid for. Technical chosen (feature not working); account (entitlement) is defensible."
     },
     {
       "id": "case_013",
@@ -151,7 +151,7 @@
       "input": "Wow, another fantastic update that completely breaks the app. I've spent three hours editing wedding photos, and now none of my projects will open. Really appreciate paying for software that apparently can't do the one thing it's supposed to do. Can someone actually fix this?",
       "expected_category": "technical",
       "ideal_summary": "After the latest update, none of the customer's projects will open and they want it fixed.",
-      "expected_difficulty": "hard",
+      "expected_difficulty": "medium",
       "tags": [
         "sarcasm"
       ],
@@ -254,11 +254,9 @@
       "input": "Are photos edited using your templates allowed to be used commercially? I'm designing some promotional materials for my small business and wanted to check first.",
       "expected_category": "general",
       "ideal_summary": "The customer asks whether photos edited with the templates can be used commercially.",
-      "expected_difficulty": "medium",
-      "tags": [
-        "ambiguous"
-      ],
-      "notes": "Licensing question. General chosen because it is a policy question; billing or account are unlikely but a licensing tier could be argued."
+      "expected_difficulty": "easy",
+      "tags": [],
+      "notes": "Licensing/policy question about commercial use of edited photos. General."
     },
     {
       "id": "case_026",
@@ -285,7 +283,7 @@
       "input": "I accidentally registered using my husband's email address. Could you help me change it to mine without losing my previous order history?",
       "expected_category": "account",
       "ideal_summary": "The customer wants to change the account email to their own while keeping their order history.",
-      "expected_difficulty": "medium",
+      "expected_difficulty": "easy",
       "tags": [],
       "notes": "Email change on an existing account. Account."
     },
@@ -335,7 +333,7 @@
       "input": "I've recently moved overseas and need to update the residential address associated with my bank account. What documents do you require?",
       "expected_category": "account",
       "ideal_summary": "The customer moved overseas and asks what documents are needed to update their residential address.",
-      "expected_difficulty": "medium",
+      "expected_difficulty": "easy",
       "tags": [],
       "notes": "Profile detail change. Account."
     },
@@ -343,7 +341,7 @@
       "id": "case_034",
       "input": "My transfer to my landlord is showing as pending, but the money has already been deducted from my balance. Whenever I tap on the transaction for more information, the app gives me an error. Can someone look into this?",
       "expected_category": "billing",
-      "ideal_summary": "A transfer to the customer's landlord is pending while the money has already left their balance, and the transaction page errors.",
+      "ideal_summary": "A transfer to the customer's landlord is pending while the money has been deducted from their balance, and the transaction page shows an error.",
       "expected_difficulty": "hard",
       "tags": [
         "ambiguous",
@@ -407,7 +405,7 @@
       "id": "case_040",
       "input": "Someone seems to have changed the email address on my account. I can't sign in anymore, and there's a charge for an order I definitely didn't place last night.",
       "expected_category": "account",
-      "ideal_summary": "The customer's account email was changed without their knowledge, they cannot sign in, and there is an order they did not place.",
+      "ideal_summary": "The customer's account email was changed without their knowledge, they cannot sign in, and there is an order and charge they did not place.",
       "expected_difficulty": "hard",
       "tags": [
         "multi_issue",
@@ -454,7 +452,7 @@
       "input": "Hi there, sorry if this is a bit long. My sister recently got married and I volunteered to edit all the photos because hiring someone professionally was going to be quite expensive. There were hundreds of pictures and everyone kept sending me more through WhatsApp. Between work and looking after my kids, I barely had any time to finish them. I finally got everything sorted over the weekend and my sister was really happy with how they turned out. Anyway, I was going through my expenses this morning and realised I've been paying for two separate subscriptions since August. Could you refund one of them?",
       "expected_category": "billing",
       "ideal_summary": "The customer discovered they have been paying for two separate subscriptions since August and asks for one to be refunded.",
-      "expected_difficulty": "hard",
+      "expected_difficulty": "medium",
       "tags": [
         "long_text"
       ],
@@ -479,7 +477,7 @@
       "ideal_summary": "The customer has tried opening the app repeatedly since yesterday but the screen stays blank, even after reinstalling.",
       "expected_difficulty": "medium",
       "tags": [
-        "mixed_language"
+        "non_english"
       ],
       "notes": "Written in Malay: blank screen after reinstall. Technical."
     },
@@ -506,10 +504,9 @@
       "input": "Nothing happens when I try to edit. Any ideas?",
       "expected_category": "technical",
       "ideal_summary": "The customer says nothing happens when they try to edit and asks for ideas.",
-      "expected_difficulty": "hard",
+      "expected_difficulty": "medium",
       "tags": [
-        "vague",
-        "very_short"
+        "vague"
       ],
       "notes": "Vague, but 'nothing happens' points to a bug. Technical."
     },
@@ -527,10 +524,8 @@
       "input": "The size selector isn't working anymore. It was fine yesterday.",
       "expected_category": "technical",
       "ideal_summary": "The size selector stopped working, though it worked yesterday.",
-      "expected_difficulty": "medium",
-      "tags": [
-        "very_short"
-      ],
+      "expected_difficulty": "easy",
+      "tags": [],
       "notes": "Short but a clear 'worked yesterday, not today' bug. Technical."
     },
     {
@@ -556,10 +551,9 @@
       "input": "App keeps getting stuck. Can someone check?",
       "expected_category": "technical",
       "ideal_summary": "The customer says the app keeps getting stuck and asks someone to check.",
-      "expected_difficulty": "hard",
+      "expected_difficulty": "easy",
       "tags": [
-        "vague",
-        "very_short"
+        "vague"
       ],
       "notes": "Vague, no detail. Technical is the only plausible reading."
     },
@@ -577,10 +571,9 @@
       "input": "something's wrong with the ordering screen again",
       "expected_category": "technical",
       "ideal_summary": "The customer says something is wrong with the ordering screen again.",
-      "expected_difficulty": "hard",
+      "expected_difficulty": "medium",
       "tags": [
-        "vague",
-        "very_short"
+        "vague"
       ],
       "notes": "Vague. 'Again' suggests a recurring bug. Technical."
     },
@@ -589,7 +582,7 @@
       "input": "why am i still getting charged every month i cancelled this ages ago and im pretty sure i even got an email confirming it can u pls check because i dont have time to keep chasing this",
       "expected_category": "billing",
       "ideal_summary": "The customer is still charged monthly for a subscription they say they cancelled long ago and asks for a check.",
-      "expected_difficulty": "medium",
+      "expected_difficulty": "easy",
       "tags": [
         "messy",
         "typo"
@@ -613,7 +606,7 @@
       "input": "hey so basically lost my phone and dont have access to that number anymore how am i supposed to get into my acc 😭",
       "expected_category": "account",
       "ideal_summary": "The customer lost their phone and cannot access their account without that number.",
-      "expected_difficulty": "medium",
+      "expected_difficulty": "easy",
       "tags": [
         "messy"
       ],
@@ -633,7 +626,7 @@
     {
       "id": "case_061",
       "input": "hi ordered a jacket last week returned it on monday still no refund also cant log in now for some reason keeps saying incorrect password even tho i just reset it??",
-      "expected_category": "account",
+      "expected_category": "billing",
       "ideal_summary": "The customer has not received a refund for a returned jacket and cannot log in despite resetting their password.",
       "expected_difficulty": "hard",
       "tags": [
@@ -641,7 +634,7 @@
         "multi_issue",
         "ambiguous"
       ],
-      "notes": "Two issues. Account chosen because login blocks the customer from checking anything; billing is defensible."
+      "notes": "Two issues. Billing chosen because the missing refund is the first and larger complaint, and the login problem does not block the refund. Account is defensible."
     },
     {
       "id": "case_062",
@@ -659,9 +652,10 @@
       "input": "ughhhh the app keeps crashing when i upload pics and now half my saved edits are missing too 🙃 really hoping they're not gone permanently",
       "expected_category": "technical",
       "ideal_summary": "The app keeps crashing when the customer uploads photos and some saved edits are missing.",
-      "expected_difficulty": "medium",
+      "expected_difficulty": "easy",
       "tags": [
-        "messy"
+        "messy",
+        "multi_issue"
       ],
       "notes": "Crash plus data loss. Both are technical."
     },
@@ -714,7 +708,7 @@
       "input": "I'm seriously considering leaving a one-star review at this point. I've contacted support twice about the $46 refund I was promised three weeks ago, and nobody has given me a proper answer. The restaurant confirmed the cancellation, so why am I still waiting for my money?",
       "expected_category": "billing",
       "ideal_summary": "The customer is still waiting on a promised $46 refund after contacting support twice and threatens a one-star review.",
-      "expected_difficulty": "hard",
+      "expected_difficulty": "easy",
       "tags": [
         "intent_trap"
       ],
