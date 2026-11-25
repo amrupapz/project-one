@@ -4,14 +4,16 @@ import argparse
 import json
 import sys
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Annotated, Any, TypeVar
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import AfterValidator, TypeAdapter, ValidationError
 
 from app.golden.io import GoldenDatasetError, find_issues, load_golden, save_golden
 from app.golden.models import (
     Difficulty,
+    check_acceptable_categories,
     EmailText,
     GoldenCase,
     GoldenDataset,
@@ -68,6 +70,8 @@ def cmd_stats(path: Path) -> int:
     _table("By difficulty", {k.value: v for k, v in stats.by_difficulty.items()}, stats.total)
     _table("By tag", stats.by_tag, stats.total)
     print(f"  ({stats.untagged} case(s) have no tags)")
+    pct = f" ({stats.with_acceptable_categories / stats.total:.1%})" if stats.total else ""
+    print(f"\nCases with acceptable_categories: {stats.with_acceptable_categories}{pct}")
     if stats.warnings:
         print("\nWarnings:")
         for warning in stats.warnings:
@@ -132,6 +136,12 @@ def prompt_new_case(dataset: GoldenDataset, input_fn: InputFn = input) -> Golden
     email = _read_email(input_fn, {c.input.strip() for c in dataset.cases})
     categories = "/".join(c.value for c in Category)
     category = _ask_until_valid(input_fn, f"Category [{categories}]: ", TypeAdapter(Category), str.strip)
+    acceptable = _ask_until_valid(
+        input_fn,
+        f"Acceptable categories, comma-separated, optional; must include {category.value!r} if set: ",
+        TypeAdapter(Annotated[list[Category], AfterValidator(partial(check_acceptable_categories, category))]),
+        _split_tags,
+    )
     summary = _ask_until_valid(input_fn, "Ideal summary (one sentence, max 300 chars): ", TypeAdapter(Summary))
     difficulties = "/".join(d.value for d in Difficulty)
     difficulty = _ask_until_valid(input_fn, f"Difficulty [{difficulties}]: ", TypeAdapter(Difficulty), str.strip)
@@ -141,6 +151,7 @@ def prompt_new_case(dataset: GoldenDataset, input_fn: InputFn = input) -> Golden
         id=case_id,
         input=email,
         expected_category=category,
+        acceptable_categories=acceptable,
         ideal_summary=summary,
         expected_difficulty=difficulty,
         tags=tags,

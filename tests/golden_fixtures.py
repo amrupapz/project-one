@@ -21,6 +21,7 @@ def fixture_case(n: int, **overrides: Any) -> dict[str, Any]:
         "id": f"case_{n:03d}",
         "input": f"FIXTURE email number {n}.",
         "expected_category": "general",
+        "acceptable_categories": [],
         "ideal_summary": f"FIXTURE summary {n}.",
         "expected_difficulty": "easy",
         "tags": [],

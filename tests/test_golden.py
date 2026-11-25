@@ -98,6 +98,48 @@ def test_model_rejects_duplicates_when_built_in_code():
         GoldenDataset.model_validate(fixture_dataset(fixture_case(1), fixture_case(1, input="FIXTURE x")))
 
 
+# --- acceptable_categories --------------------------------------------------------
+
+def test_acceptable_categories_default_empty_and_optional(ds_path):
+    case = fixture_case(1)
+    case.pop("acceptable_categories", None)
+    write_json(ds_path, fixture_dataset(case))
+    assert load_golden(ds_path).cases[0].acceptable_categories == []
+
+
+def test_acceptable_categories_valid(ds_path):
+    write_json(ds_path, fixture_dataset(
+        fixture_case(1, expected_category="billing", acceptable_categories=["technical", "billing"]),
+    ))
+    assert load_golden(ds_path).cases[0].acceptable_categories == [Category.TECHNICAL, Category.BILLING]
+
+
+def test_acceptable_categories_field_follows_expected_category():
+    fields = list(GoldenCase.model_fields)
+    assert fields.index("acceptable_categories") == fields.index("expected_category") + 1
+
+
+@pytest.mark.parametrize(
+    ("acceptable", "message"),
+    [
+        (["technical", "account"], "must include expected_category 'billing'"),
+        (["billing", "technical", "billing"], "duplicate categories: ['billing']"),
+        (["billing", "shipping"], "Input should be"),
+    ],
+)
+def test_acceptable_categories_violations(ds_path, acceptable, message):
+    write_json(ds_path, fixture_dataset(fixture_case(1, expected_category="billing", acceptable_categories=acceptable)))
+    [issue] = issues_for(ds_path)
+    assert issue.startswith("case_001: acceptable_categories")
+    assert message in issue
+
+
+def test_acceptable_categories_with_bad_expected_reports_only_that(ds_path):
+    write_json(ds_path, fixture_dataset(fixture_case(1, expected_category="shipping", acceptable_categories=["billing"])))
+    [issue] = issues_for(ds_path)
+    assert issue.startswith("case_001: expected_category:")
+
+
 # --- schema violations, each with its case id ------------------------------------
 
 def test_missing_notes(ds_path):
@@ -301,6 +343,7 @@ ADD_ANSWERS = (
     "FIXTURE línea dos",
     ".",
     "technical",
+    "",  # acceptable_categories: none
     "FIXTURE summary.",
     "medium",
     "typo, very_short",
@@ -341,6 +384,7 @@ def test_add_reasks_invalid_values(ds_path, capsys):
         "FIXTURE email number 1.", ".",  # duplicate of case_001: re-asked
         "FIXTURE fresh email", ".",
         "shipping", "account",           # bad category, then good
+        "billing", "account, billing",   # acceptable must include expected, then good
         "", "FIXTURE summary.",          # empty summary, then good
         "impossible", "hard",
         "Bad Tag", "",                   # bad tag, then none
@@ -350,12 +394,13 @@ def test_add_reasks_invalid_values(ds_path, capsys):
     assert main(["add", str(ds_path)], input_fn=scripted(*answers)) == 0
     out = capsys.readouterr().out
     assert "already has exactly this input" in out
-    assert out.count("invalid:") == 6
+    assert out.count("invalid:") == 7
     new = load_golden(ds_path).cases[-1]
     assert (new.id, new.expected_category, new.expected_difficulty, new.tags) == ("case_002", "account", "hard", [])
+    assert new.acceptable_categories == ["account", "billing"]
 
 
-@pytest.mark.parametrize("answers", [ADD_ANSWERS[:4], (*ADD_ANSWERS[:-1], "n")])
+@pytest.mark.parametrize("answers", [ADD_ANSWERS[:5], (*ADD_ANSWERS[:-1], "n")])
 def test_add_cancel_or_decline_writes_nothing(ds_path, answers):
     write_json(ds_path, fixture_dataset(fixture_case(1)))
     before = ds_path.read_bytes()
@@ -401,6 +446,7 @@ def test_stats_counts_and_no_warnings_when_balanced():
     assert stats.by_difficulty == {Difficulty.EASY: 24, Difficulty.MEDIUM: 0, Difficulty.HARD: 8}
     assert stats.by_tag == {"typo": 4}
     assert stats.untagged == 28
+    assert stats.with_acceptable_categories == 0
     assert stats.warnings == []
 
 
@@ -413,8 +459,30 @@ def test_stats_warns_on_small_category_and_few_hard_cases():
     ]
 
 
+def _with_acceptable(cases: list[dict], count: int) -> list[dict]:
+    for case in cases[:count]:
+        case["acceptable_categories"] = [case["expected_category"], "general" if case["expected_category"] != "general" else "billing"]
+    return cases
+
+
+def test_stats_acceptable_categories_at_limit_no_warning():
+    cases = _with_acceptable(_balanced_cases(hard_per_category=2), 8)  # 8/32 = 25%
+    stats = compute_stats(GoldenDataset.model_validate(fixture_dataset(*cases)))
+    assert stats.with_acceptable_categories == 8
+    assert stats.warnings == []
+
+
+def test_stats_warns_when_too_many_acceptable_categories():
+    cases = _with_acceptable(_balanced_cases(hard_per_category=2), 9)  # 9/32 = 28.1%
+    stats = compute_stats(GoldenDataset.model_validate(fixture_dataset(*cases)))
+    assert stats.warnings == [
+        "28.1% of cases have acceptable_categories; keep it at or under 25% or the category labels lose meaning"
+    ]
+
+
 def test_stats_command_runs(ds_path, capsys):
     write_json(ds_path, fixture_dataset(*_balanced_cases(hard_per_category=0)))
     assert main(["stats", str(ds_path)]) == 0
     out = capsys.readouterr().out
     assert "Total cases: 32" in out and "hard cases are 0.0%" in out
+    assert "Cases with acceptable_categories: 0 (0.0%)" in out

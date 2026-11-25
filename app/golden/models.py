@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Self
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, StringConstraints, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, StringConstraints, ValidationInfo, field_validator, model_validator
 
 from app.schemas import Category, Summary
 
@@ -55,6 +55,18 @@ NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length
 TagList = Annotated[list[Tag], AfterValidator(_unique_tags)]
 
 
+def check_acceptable_categories(expected: Category | None, categories: list[Category]) -> list[Category]:
+    """Empty is fine. Otherwise: no duplicates, and expected_category must be included."""
+    if not categories:
+        return categories
+    dupes = sorted({c.value for i, c in enumerate(categories) if c in categories[:i]})
+    if dupes:
+        raise ValueError(f"duplicate categories: {dupes}")
+    if expected is not None and expected not in categories:
+        raise ValueError(f"must include expected_category {expected.value!r}")
+    return categories
+
+
 class GoldenCase(BaseModel):
     """One human-labeled case. Field order here is the key order written to disk."""
 
@@ -63,10 +75,18 @@ class GoldenCase(BaseModel):
     id: CaseId
     input: EmailText
     expected_category: Category
+    # Other labels a reasonable human could defend; see docs/labeling_guidelines.md.
+    acceptable_categories: list[Category] = []
     ideal_summary: Summary
     expected_difficulty: Difficulty
     tags: TagList = []
     notes: NonEmptyStr
+
+    @field_validator("acceptable_categories")
+    @classmethod
+    def _acceptable_includes_expected(cls, value: list[Category], info: ValidationInfo) -> list[Category]:
+        # expected_category is validated first (field order); it is absent here if it was invalid.
+        return check_acceptable_categories(info.data.get("expected_category"), value)
 
 
 class GoldenHeader(BaseModel):

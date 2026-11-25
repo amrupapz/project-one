@@ -35,8 +35,11 @@ Instructor mode (JSON vs tools) is set by `INSTRUCTOR_MODE` in `app/llm.py`.
 ## Golden dataset
 
 `golden/v1.json` holds human-written, human-labeled cases. Never generate cases.
+Label them by [docs/labeling_guidelines.md](docs/labeling_guidelines.md).
 Each case has: `id` (`case_001`, unique), `input` (email text), `expected_category`
-(`billing | technical | account | general`), `ideal_summary` (≤300 chars),
+(`billing | technical | account | general`), optional `acceptable_categories`
+(other defensible labels; if set, it must include `expected_category` and have no
+duplicates, e.g. `["billing", "technical"]`), `ideal_summary` (≤300 chars),
 `expected_difficulty` (`easy | medium | hard`), optional `tags` (snake_case, e.g.
 `typo`, `sarcasm`, `mixed_language`, `ambiguous`, `very_short`, `injection`, `vague`),
 and `notes` (required: why the case matters or why the label was chosen).
@@ -53,8 +56,12 @@ and `notes` (required: why the case matters or why the label was chosen).
   problem with its case id (duplicates, bad enums, missing notes, JSON syntax
   errors with line numbers). `add` and `stats` refuse to run on an invalid file.
 - **Check balance:** `.venv/bin/python -m app.golden stats` shows counts by
-  category, difficulty and tag, and warns if a category has fewer than 8 cases
-  or hard cases are under 15%.
+  category, difficulty and tag and how many cases have `acceptable_categories`.
+  It warns if a category has fewer than 8 cases, hard cases are under 15%, or
+  more than 25% of cases have `acceptable_categories`.
+- **Ambiguous cases:** set `acceptable_categories` only when two reasonable
+  humans could disagree (tie-break rule 4 in the guidelines), and list
+  `expected_category` first.
 - `add` rewrites the whole file in a fixed format (indent 2, fixed key order,
   non-ASCII kept as-is), so the first `add` after hand-editing may also
   reformat your hand-written cases.
