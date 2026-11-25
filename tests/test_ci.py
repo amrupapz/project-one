@@ -300,7 +300,7 @@ def test_comment_marker_status_and_tables():
     text = _comment(CiOutcome([_result(n_cases=20, regress=2, improve=1, soft=1)]))
     assert text.splitlines()[0] == COMMENT_MARKER  # used to find and update the comment on re-push
     assert "## ⚠️ LLM regression check: WARNING" in text  # net 1 of 20 cases lost = -5 pp (warning at 3, critical at 8)
-    assert "| Strict accuracy | 90.0% | 85.0% | -5.0 pp |" in text
+    assert "| Strict accuracy | 95.0% | 90.0% | -5.0 pp |" in text
     assert "| Acceptable accuracy |" in text and "| Mean judge score (not used for status) |" in text
     assert "| case_001 | billing | billing → technical | regressed | – |" in text  # still acceptable
     assert "| case_002 | billing | billing → technical | regressed | regressed |" in text
