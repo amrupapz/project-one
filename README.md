@@ -185,3 +185,51 @@ the strict / acceptable / judge numbers, any warnings and the report path. It ne
 sends email text. Unset means no alert; `--no-alert` skips it; a failed post prints a
 warning and does not change the exit code. Other channels can implement the
 `Alerter` protocol in `app/evals/alerts.py`.
+
+## CI: regression check on pull requests
+
+`.github/workflows/prompt-regression.yml` runs on pull requests that touch
+`prompts/**`, `golden/**`, `eval_config.yaml` or `app/**`:
+
+1. Installs with uv (Python from `.python-version`, dependencies cached on `uv.lock`).
+2. Runs the unit tests and validates every `golden/*.json`. No API key is needed for this.
+3. Runs `python -m app.ci --base-sha <base>`. For each `prompts/*.yaml` file the PR
+   **adds or modifies**, it runs the eval on the base branch's version of that file
+   and on the PR's version, with the PR's code, `eval_config.yaml` and
+   `golden/v1.json`, in a fresh `results/ci/eval.db`, then compares the two runs.
+   A **new** prompt file is compared against the base branch's copy of
+   `baseline_prompt` (set in `eval_config.yaml`, default `prompts/v1.yaml`). If no
+   prompt file changed, the eval is skipped.
+4. Posts one PR comment (updated in place on every push) with the status, the
+   delta tables, the flipped cases and the strict-vs-acceptable note, and uploads
+   the HTML reports as the `regression-reports` artifact.
+5. Fails the check on **CRITICAL** (exit 2) or an error (exit 3). **WARNING** passes
+   but is shown in the comment.
+
+The judge is off on pull requests to save cost. To score summaries, run the workflow
+manually (Actions > prompt-regression > Run workflow) on the PR's branch with
+`judge` enabled; it updates the same PR comment. The merge gate is still the
+automatic pull_request run.
+
+Run the same check locally against `main`:
+
+```sh
+.venv/bin/python -m app.ci --base-sha "$(git merge-base main HEAD)"   # add --judge to score summaries
+```
+
+Limits:
+- PRs from forks get no secrets, so their check fails with a "missing
+  OPENROUTER_API_KEY" message. The workflow uses `pull_request`, never
+  `pull_request_target`, so fork code can never reach the key.
+- Edit a prompt by adding a new version file rather than changing an existing one.
+  Runs record `prompt_file_sha256`, but two different files both called `v2` are
+  easy to confuse.
+
+### Not built yet: slow-drift detection
+
+Each PR is compared with its own base, so a series of small drops that each stay
+under the WARNING threshold never fails a check. Catching that needs a **stored run
+history**: for example, a scheduled job that runs the production prompt on `main`,
+keeps the results somewhere persistent (a committed results file, a database or an
+artifact store, since `results/` is gitignored and CI starts fresh), and alerts when
+the latest run falls below a 7-run moving average by some margin.
