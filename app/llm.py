@@ -1,0 +1,28 @@
+"""OpenRouter client wrapped with instructor for structured output."""
+
+import os
+
+import instructor
+from openai import AsyncOpenAI
+
+from app.errors import MissingAPIKeyError
+
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+API_KEY_ENV_VAR = "OPENROUTER_API_KEY"
+
+# JSON mode works across more OpenRouter models than tool calling.
+# Switch to instructor.Mode.TOOLS for models with reliable function calling.
+INSTRUCTOR_MODE = instructor.Mode.JSON
+
+# Instructor re-asks the model once on a validation failure (2 attempts total).
+MAX_RETRIES = 1
+
+
+def make_client(openai_client: AsyncOpenAI | None = None) -> instructor.AsyncInstructor:
+    """Wrap an AsyncOpenAI client. Builds an OpenRouter client from env if none is given."""
+    if openai_client is None:
+        api_key = os.environ.get(API_KEY_ENV_VAR)
+        if not api_key:
+            raise MissingAPIKeyError(f"{API_KEY_ENV_VAR} is not set (see .env.example)")
+        openai_client = AsyncOpenAI(base_url=OPENROUTER_BASE_URL, api_key=api_key)
+    return instructor.from_openai(openai_client, mode=INSTRUCTOR_MODE)
