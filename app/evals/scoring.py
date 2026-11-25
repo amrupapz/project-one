@@ -60,6 +60,7 @@ async def judge_summary(
     *,
     rubric: str,
     judge_model: str,
+    max_tokens: int,
     client: instructor.AsyncInstructor,
 ) -> JudgeOutcome:
     """Score candidate_summary 1-5. Never raises for API or output errors."""
@@ -67,6 +68,7 @@ async def judge_summary(
         verdict = await client.chat.completions.create(
             model=judge_model,
             temperature=JUDGE_TEMPERATURE,
+            max_tokens=max_tokens,
             messages=build_judge_messages(email, ideal_summary, candidate_summary, rubric),
             response_model=JudgeVerdict,
             max_retries=MAX_RETRIES,

@@ -138,8 +138,8 @@ async def test_run_scores_cases_with_and_without_acceptable(monkeypatch, prompt_
     async def judge_handler(kwargs):
         return judge_reply()
 
-    classifier, _ = fake_client(monkeypatch, classify_handler)
-    judge, _ = fake_client(monkeypatch, judge_handler)
+    classifier, classifier_calls = fake_client(monkeypatch, classify_handler)
+    judge, judge_calls = fake_client(monkeypatch, judge_handler)
     results = await run_eval(prompt_config, dataset, eval_config=eval_config, classifier_client=classifier, judge_client=judge)
 
     assert [(r.case_id, r.strict_match, r.acceptable_match) for r in results] == [
@@ -147,6 +147,9 @@ async def test_run_scores_cases_with_and_without_acceptable(monkeypatch, prompt_
         ("case_002", False, True),
         ("case_003", True, True),
     ]
+    # Both calls cap output, so OpenRouter doesn't reserve credit for the model maximum.
+    assert {c["max_tokens"] for c in classifier_calls} == {300}
+    assert {c["max_tokens"] for c in judge_calls} == {eval_config.judge_max_tokens}
     assert results[0].latency_ms is not None and results[0].input_tokens == 100 and results[0].output_tokens == 20
 
 
@@ -300,12 +303,14 @@ async def test_judge_call_settings(monkeypatch, eval_config):
     judge, calls = fake_client(monkeypatch, handler)
     outcome = await judge_summary(
         "FIXTURE email", "FIXTURE ideal.", "FIXTURE candidate.",
-        rubric=eval_config.judge_rubric, judge_model=eval_config.judge_model, client=judge,
+        rubric=eval_config.judge_rubric, judge_model=eval_config.judge_model,
+        max_tokens=eval_config.judge_max_tokens, client=judge,
     )
     assert (outcome.score, outcome.reason) == (3, "Misses the main ask.")
     [call] = calls
     assert call["model"] == "anthropic/claude-haiku-4.5"
     assert call["temperature"] == 0
+    assert call["max_tokens"] == eval_config.judge_max_tokens == 300
 
 
 def test_judge_is_not_told_prompt_version_or_model(prompt_config):
@@ -331,7 +336,8 @@ async def test_injection_in_email_is_passed_as_data_and_scored_normally(monkeypa
     judge, calls = fake_client(monkeypatch, handler)
     outcome = await judge_summary(
         INJECTION, "FIXTURE ideal.", "FIXTURE candidate.",
-        rubric=eval_config.judge_rubric, judge_model=eval_config.judge_model, client=judge,
+        rubric=eval_config.judge_rubric, judge_model=eval_config.judge_model,
+        max_tokens=eval_config.judge_max_tokens, client=judge,
     )
     assert outcome.score == 2  # scored normally from the judge's reply, not hijacked
 
@@ -357,12 +363,16 @@ def test_repo_eval_config_loads():
     config = EvalConfig.from_yaml(DEFAULT_EVAL_CONFIG_PATH)
     assert config.judge_model == "anthropic/claude-haiku-4.5"
     assert config.default_concurrency == 8
+    assert config.judge_max_tokens == 300
     assert config.db_path.is_absolute() and config.db_path.name == "eval.db"
 
 
 @pytest.mark.parametrize(
     "overrides",
-    [{"judge_model": None}, {"judge_model": "haiku"}, {"default_concurrency": 0}, {"judge_rubric": " "}, {"extra": 1}],
+    [
+        {"judge_model": None}, {"judge_model": "haiku"}, {"default_concurrency": 0}, {"judge_rubric": " "},
+        {"extra": 1}, {"judge_max_tokens": 0},
+    ],
 )
 def test_bad_eval_config_fails(tmp_path, overrides):
     data = {"judge_model": "anthropic/claude-haiku-4.5", "default_concurrency": 8, "judge_rubric": RUBRIC, **overrides}

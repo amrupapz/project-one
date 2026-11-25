@@ -15,7 +15,7 @@ from instructor.core.exceptions import InstructorError
 
 from app.config import PromptConfig
 from app.errors import ClassificationError, MissingAPIKeyError
-from app.llm import MAX_RETRIES, make_client
+from app.llm import CLASSIFIER_MAX_TOKENS, MAX_RETRIES, make_client
 from app.schemas import ClassifyOutput, ClassifyResult
 
 
@@ -54,6 +54,7 @@ async def classify(
         output, completion = await client.chat.completions.create_with_completion(
             model=config.model_name,
             temperature=config.temperature,
+            max_tokens=CLASSIFIER_MAX_TOKENS,
             messages=build_messages(email, config),
             response_model=ClassifyOutput,
             max_retries=MAX_RETRIES,

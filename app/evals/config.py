@@ -21,6 +21,8 @@ class EvalConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     judge_model: Annotated[str, StringConstraints(pattern=MODEL_NAME_PATTERN)]
+    # Caps output per judge call so OpenRouter doesn't reserve credit for the model maximum.
+    judge_max_tokens: int = Field(default=300, ge=1, le=4096)
     default_concurrency: int = Field(default=8, ge=1, le=64)
     judge_rubric: NonEmptyStr
     db_path: Path = Path("results/eval.db")

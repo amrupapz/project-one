@@ -7,7 +7,7 @@ import pytest
 from app.classify import build_messages, classify, main
 from app.config import PromptConfig
 from app.errors import ClassificationError, MissingAPIKeyError
-from app.llm import make_client
+from app.llm import CLASSIFIER_MAX_TOKENS, make_client
 from tests.conftest import VALID_PROMPT, make_completion
 
 GOOD = json.dumps({"category": "billing", "summary": "The customer wants a refund."})
@@ -34,6 +34,7 @@ async def test_classify_success(config, fake_openai):
     kwargs = mock.await_args.kwargs
     assert kwargs["model"] == config.model_name
     assert kwargs["temperature"] == config.temperature
+    assert kwargs["max_tokens"] == CLASSIFIER_MAX_TOKENS == 300
     assert kwargs["messages"][-1] == {"role": "user", "content": "Please refund me."}
 
 

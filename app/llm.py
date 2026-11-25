@@ -17,6 +17,11 @@ INSTRUCTOR_MODE = instructor.Mode.JSON
 # Instructor re-asks the model once on a validation failure (2 attempts total).
 MAX_RETRIES = 1
 
+# Cap on output tokens per classifier call. Without it OpenRouter reserves credit for
+# the model's maximum output on every request (402 in_flight_budget_exhausted).
+# The JSON answer is a category plus one sentence, well under this.
+CLASSIFIER_MAX_TOKENS = 300
+
 
 def make_client(openai_client: AsyncOpenAI | None = None) -> instructor.AsyncInstructor:
     """Wrap an AsyncOpenAI client. Builds an OpenRouter client from env if none is given."""

@@ -1,6 +1,7 @@
 # Evaluation settings. Any change here changes eval_config_sha256 on new runs,
 # so a rubric edit is visible when comparing runs.
 judge_model: anthropic/claude-haiku-4.5
+judge_max_tokens: 300  # caps output per judge call; without it OpenRouter reserves the model maximum
 default_concurrency: 8
 db_path: results/eval.db  # relative to this file
 judge_rubric: |

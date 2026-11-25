@@ -52,6 +52,7 @@ async def _run_case(
         result.summary,
         rubric=eval_config.judge_rubric,
         judge_model=eval_config.judge_model,
+        max_tokens=eval_config.judge_max_tokens,
         client=judge_client,
     )
     return CaseResult(
