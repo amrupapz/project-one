@@ -1,0 +1,136 @@
+name: prompt-regression
+
+# Only `pull_request`, never `pull_request_target`: the latter runs fork PR code with this repo's secrets, which would expose OPENROUTER_API_KEY.
+on:
+  pull_request:
+    paths:
+      - "prompts/**"
+      - "golden/**"
+      - "eval_config.yaml"
+      - "app/**"
+  workflow_dispatch:
+    inputs:
+      judge:
+        description: "Also run the LLM judge on summaries (slower, costs more)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: write # to post and update the PR comment
+
+concurrency: # a new push cancels the eval still running for the old one
+  group: prompt-regression-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the base commit is needed for the diff and the base prompt versions
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+          cache-python: true
+
+      - name: Install dependencies (Python version from .python-version)
+        run: uv sync --locked
+
+      - name: Unit tests
+        run: uv run pytest -q
+
+      - name: Validate every golden dataset
+        run: |
+          for f in golden/*.json; do
+            uv run python -m app.golden validate "$f"
+          done
+
+      - name: Find the pull request and base commit
+        id: pr
+        env: # event values go through env, never straight into the script (branch names are user-controlled)
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BRANCH: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            number="$PR_NUMBER"
+            base_sha="$PR_BASE_SHA"
+          else
+            # Manual run: use the open PR for this branch, if any, and compare from where it branched off.
+            pr_json=$(gh pr view "$BRANCH" --repo "$GITHUB_REPOSITORY" --json number,baseRefName 2>/dev/null || true)
+            if [ -n "$pr_json" ]; then
+              number=$(jq -r .number <<<"$pr_json")
+              base_ref=$(jq -r .baseRefName <<<"$pr_json")
+            else
+              number=""
+              base_ref="$DEFAULT_BRANCH"
+            fi
+            base_sha=$(git merge-base "origin/$base_ref" HEAD)
+          fi
+          echo "PR: ${number:-none}, base: $base_sha"
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Regression check
+        id: check
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }} # only this step sees the key; app.ci never prints it
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          JUDGE_FLAG: ${{ inputs.judge && '--judge' || '' }} # empty on pull_request: judge off by default
+        run: |
+          set +e
+          uv run python -m app.ci --base-sha "$BASE_SHA" --out results/ci $JUDGE_FLAG
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Upload HTML reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: regression-reports
+          path: |
+            results/ci/*.html
+            results/ci/comment.md
+          if-no-files-found: ignore
+
+      - name: Show the result in the job summary
+        if: always() && hashFiles('results/ci/comment.md') != ''
+        run: cat results/ci/comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post or update the PR comment
+        if: always() && steps.pr.outputs.number != '' && hashFiles('results/ci/comment.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.pr.outputs.number }}
+        run: |
+          marker='<!-- llm-regression-check -->'
+          jq -Rs '{body: .}' results/ci/comment.md > "$RUNNER_TEMP/comment.json"
+          comment_id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+            --jq ".[] | select(.user.type == \"Bot\" and (.body | startswith(\"$marker\"))) | .id" | head -n 1)
+          if [ -n "$comment_id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" --input "$RUNNER_TEMP/comment.json" > /dev/null
+            echo "Updated comment $comment_id"
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" --input "$RUNNER_TEMP/comment.json" > /dev/null
+            echo "Posted a new comment"
+          fi
+
+      - name: Fail on CRITICAL or error
+        if: always()
+        env:
+          STATUS: ${{ steps.check.outputs.status }}
+        run: |
+          case "$STATUS" in
+            0) echo "Regression check: PASS" ;;
+            1) echo "::warning::Regression check: WARNING (shown in the PR comment; does not block the merge)" ;;
+            2) echo "::error::Regression check: CRITICAL regression"; exit 1 ;;
+            *) echo "::error::Regression check did not complete (status '${STATUS:-not run}')"; exit 1 ;;
+          esac
