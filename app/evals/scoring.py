@@ -37,7 +37,7 @@ class JudgeOutcome(BaseModel):
     description and error_code a compact code such as '429'."""
 
     score: int | None
-    reason: str
+    reason: str | None  # None only when the judge was skipped (--no-judge)
     error_code: str | None = None
 
 

@@ -23,6 +23,7 @@ class RunInfo(BaseModel):
     concurrency: int = Field(ge=1)
     case_limit: int | None = Field(default=None, ge=1)  # None = full run
     notes: str | None = None
+    judge_enabled: bool = True  # False for --no-judge runs: every summary_score is null by design
 
     @property
     def is_partial(self) -> bool:

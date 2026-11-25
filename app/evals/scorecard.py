@@ -103,15 +103,21 @@ def format_scorecard(info: RunInfo, card: Scorecard) -> str:
     if info.notes:
         lines.append(f"Notes: {info.notes}")
     o = card.overall
+    if info.judge_enabled:
+        judge_line = (
+            "Mean judge score:     "
+            + ("-" if card.mean_judge_score is None else f"{card.mean_judge_score:.2f} / 5")
+            + f"  ({card.judged}/{o.total} scored)"
+        )
+    else:
+        judge_line = "Mean judge score:     NOT JUDGED (--no-judge run; summary scores are null)"
     lines += [
         "",
         f"Strict accuracy:      {_pct(o.strict)}  ({o.strict_correct}/{o.total})",
         f"Acceptable accuracy:  {_pct(o.acceptable)}  ({o.acceptable_correct}/{o.total})",
-        "Mean judge score:     "
-        + ("-" if card.mean_judge_score is None else f"{card.mean_judge_score:.2f} / 5")
-        + f"  ({card.judged}/{o.total} scored)",
+        judge_line,
     ]
-    if card.judge_unreliable:
+    if info.judge_enabled and card.judge_unreliable:
         lines.append(
             f"WARNING: judge failed on {card.judge_failures} of {card.judge_attempts} cases; judge mean is unreliable"
         )

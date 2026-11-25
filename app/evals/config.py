@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Annotated, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from app.config import MODEL_NAME_PATTERN, NonEmptyStr
 
@@ -15,6 +15,26 @@ DEFAULT_EVAL_CONFIG_PATH = REPO_ROOT / "eval_config.yaml"
 
 def file_sha256(path: str | Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+class CompareConfig(BaseModel):
+    """Thresholds for `python -m app.evals compare`. Drops are baseline minus candidate."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    strict_drop_warning_pp: float = Field(default=3.0, gt=0)
+    strict_drop_critical_pp: float = Field(default=8.0, gt=0)
+    # A drop in mean judge score (1-5 scale) of at least this raises PASS to WARNING; never CRITICAL.
+    judge_score_drop_warning: float = Field(default=0.3, gt=0)
+    # Below this fraction of scored cases, a run's judge mean is not used for the status.
+    min_judge_coverage: float = Field(default=0.95, gt=0, le=1)
+    trend_runs: int = Field(default=10, ge=2, le=100)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> Self:
+        if self.strict_drop_critical_pp < self.strict_drop_warning_pp:
+            raise ValueError("strict_drop_critical_pp must be >= strict_drop_warning_pp")
+        return self
 
 
 class EvalConfig(BaseModel):
@@ -28,6 +48,7 @@ class EvalConfig(BaseModel):
     default_concurrency: int = Field(default=8, ge=1, le=64)
     judge_rubric: NonEmptyStr
     db_path: Path = Path("results/eval.db")
+    compare: CompareConfig = CompareConfig()
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> Self:

@@ -82,8 +82,10 @@ stores the run in SQLite (`results/eval.db`, gitignored), and prints a scorecard
 
 Options for `run`: `--dataset` (default `golden/v1.json`), `--concurrency N`
 (default from `eval_config.yaml`), `--limit N` (first N cases only; stored as a
-PARTIAL RUN), `--notes "..."`. A full run costs one classifier call and one judge
-call per case (plus a retry when an output is invalid).
+PARTIAL RUN), `--notes "..."`, `--no-judge` (skip the summary judge: every
+`summary_score` is null, the run is stored with `judge_enabled = 0` and its scorecard
+says NOT JUDGED; takes seconds instead of minutes). A full run costs one classifier
+call and one judge call per case (plus a retry when an output is invalid).
 
 Scoring per case:
 - `strict_match`: predicted category == `expected_category`.
@@ -104,3 +106,63 @@ calls failed. Failures print as one short line each, e.g. `judge failed: case_01
 
 Each run stores sha256 hashes of the prompt file, dataset file and
 `eval_config.yaml`, so a changed rubric or dataset is visible when comparing runs.
+
+The database schema is versioned (`PRAGMA user_version`, now 2). Opening a version-1
+database migrates it in place (adds `runs.judge_enabled`, existing runs count as
+judged) after copying it to `results/eval.db.bak` (or `.bak.1`, ... if that exists).
+
+## Comparing runs
+
+```sh
+.venv/bin/python -m app.evals compare                      # latest run vs previous full run
+.venv/bin/python -m app.evals compare --baseline 20261125-112215-81ac --candidate 20261125-112841-1718
+.venv/bin/python -m app.evals compare --html /tmp/report.html --no-alert
+```
+
+Defaults: the candidate is the latest run; the baseline is the most recent earlier
+**full** run on the same dataset file (a `--no-judge` run is never picked as the
+baseline of a judged candidate). The command prints a summary, writes a
+self-contained HTML report (default `results/report_<candidate>.html`: run metadata,
+scorecard, every regression and improvement with old and new output side by side,
+and trend charts of strict accuracy and judge score over the last `trend_runs` full
+runs), and exits with the status:
+
+| Exit | Status | Meaning |
+|---|---|---|
+| 0 | PASS | strict accuracy dropped less than `strict_drop_warning_pp` (3) |
+| 1 | WARNING | strict drop ≥ 3 pp, or mean judge score dropped ≥ `judge_score_drop_warning` (0.3) |
+| 2 | CRITICAL | strict drop ≥ `strict_drop_critical_pp` (8) |
+| 3 | error | refused comparison, unknown run id, no baseline, bad arguments |
+
+Thresholds live under `compare:` in `eval_config.yaml`. The status line always
+carries the flip counts, e.g. `PASS (strict -2.9 pp; 4 regressions, 2 improvements)`,
+and the report lists every regression whatever the status. Acceptable-match flips
+are listed separately and don't drive the status.
+
+How runs are matched and when the result is flagged:
+- Metrics are computed on the case ids both runs share.
+- Different `dataset_sha256`: refused (exit 3).
+- A partial run (`--limit`) or a different `eval_config_sha256`: compared, with a
+  prominent WARNING.
+- Judge coverage below `min_judge_coverage` (95%) in either run, or a `--no-judge`
+  run on either side: the judge delta is shown as unreliable or n/a and is not used
+  for the status.
+- Noise: with 68 cases one case is about 1.5 pp, so WARNING needs a net loss of 3
+  cases (4.4 pp; 2 cases is 2.9 pp) and CRITICAL a net loss of 6 (8.8 pp). Check the
+  noise level with `repeat`:
+
+```sh
+.venv/bin/python -m app.evals repeat --prompt prompts/v1.yaml --n 5 --no-judge
+```
+
+`repeat` runs the prompt N times (sequentially, never judged, not saved) and prints
+the strict accuracy of each run, their mean, stdev and spread, and every case whose
+prediction changed between runs. A compare delta inside that spread is likely noise.
+
+### Slack alerts
+
+Set `SLACK_WEBHOOK_URL` (an incoming webhook) and `compare` posts the status line,
+the strict / acceptable / judge numbers, any warnings and the report path. It never
+sends email text. Unset means no alert; `--no-alert` skips it; a failed post prints a
+warning and does not change the exit code. Other channels can implement the
+`Alerter` protocol in `app/evals/alerts.py`.

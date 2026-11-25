@@ -14,7 +14,7 @@ from app.errors import ClassificationError
 from app.evals.config import EvalConfig, file_sha256
 from app.evals.judge_client import error_code, make_judge_client
 from app.evals.models import CaseResult, EvalRun, RunInfo
-from app.evals.scoring import acceptable_match, judge_summary, strict_match
+from app.evals.scoring import JudgeOutcome, acceptable_match, judge_summary, strict_match
 from app.golden.io import load_golden
 from app.golden.models import GoldenCase, GoldenDataset
 from app.llm import make_client
@@ -32,7 +32,7 @@ async def _run_case(
     prompt_config: PromptConfig,
     eval_config: EvalConfig,
     classifier_client: instructor.AsyncInstructor,
-    judge_client: instructor.AsyncInstructor,
+    judge_client: instructor.AsyncInstructor | None,
     on_failure: FailureFn | None,
 ) -> CaseResult:
     labels = {
@@ -51,15 +51,18 @@ async def _run_case(
             on_failure(case.id, "classify", error_code(exc))
         return CaseResult(**labels, error=str(exc))
 
-    verdict = await judge_summary(
-        case.input,
-        case.ideal_summary,
-        result.summary,
-        rubric=eval_config.judge_rubric,
-        judge_model=eval_config.judge_model,
-        max_tokens=eval_config.judge_max_tokens,
-        client=judge_client,
-    )
+    if judge_client is None:  # --no-judge: scores stay null; RunInfo.judge_enabled marks the run
+        verdict = JudgeOutcome(score=None, reason=None)
+    else:
+        verdict = await judge_summary(
+            case.input,
+            case.ideal_summary,
+            result.summary,
+            rubric=eval_config.judge_rubric,
+            judge_model=eval_config.judge_model,
+            max_tokens=eval_config.judge_max_tokens,
+            client=judge_client,
+        )
     if verdict.error_code is not None and on_failure:
         on_failure(case.id, "judge", verdict.error_code)
     return CaseResult(
@@ -83,6 +86,7 @@ async def run_eval(
     eval_config: EvalConfig,
     concurrency: int | None = None,
     limit: int | None = None,
+    judge: bool = True,
     classifier_client: instructor.AsyncInstructor | None = None,
     judge_client: instructor.AsyncInstructor | None = None,
     on_progress: ProgressFn | None = None,
@@ -99,7 +103,7 @@ async def run_eval(
     if limit is not None and limit < 1:
         raise ValueError("limit must be >= 1")
     classifier_client = classifier_client or make_client()
-    judge_client = judge_client or make_judge_client(eval_config)
+    judge_client = (judge_client or make_judge_client(eval_config)) if judge else None
     cases = dataset.cases[:limit] if limit else dataset.cases
 
     semaphore = asyncio.Semaphore(concurrency)
@@ -125,6 +129,7 @@ async def execute_run(
     concurrency: int | None = None,
     limit: int | None = None,
     notes: str | None = None,
+    judge: bool = True,
     classifier_client: instructor.AsyncInstructor | None = None,
     judge_client: instructor.AsyncInstructor | None = None,
     on_progress: ProgressFn | None = None,
@@ -152,6 +157,7 @@ async def execute_run(
         concurrency=concurrency,
         case_limit=case_limit,
         notes=notes,
+        judge_enabled=judge,
     )
     cases = await run_eval(
         prompt_config,
@@ -159,6 +165,7 @@ async def execute_run(
         eval_config=eval_config,
         concurrency=concurrency,
         limit=case_limit,
+        judge=judge,
         classifier_client=classifier_client,
         judge_client=judge_client,
         on_progress=on_progress,
