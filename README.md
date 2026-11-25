@@ -65,8 +65,27 @@ and `notes` (required: why the case matters or why the label was chosen).
 - `add` rewrites the whole file in a fixed format (indent 2, fixed key order,
   non-ASCII kept as-is), so the first `add` after hand-editing may also
   reformat your hand-written cases.
-- For a breaking relabel, copy to `golden/v2.json` and bump `dataset_version`
-  (it must match the file name).
+- For a breaking relabel, copy to the next free version (`golden/v3.json`; `v2` is
+  the held-out set, see below) and bump `dataset_version` (it must match the file name).
+
+## Datasets
+
+| File | Role | Cases |
+|---|---|---|
+| `golden/v1.json` | **Main dataset.** Use it to develop and tune prompts and for regression runs. | 68 |
+| `golden/v2.json` | **Held-out check.** Run it only to confirm that a prompt tuned on v1 generalizes. Never tune prompts on it, and never add its cases to v1. | 12 |
+
+```sh
+.venv/bin/python -m app.evals run --prompt prompts/v3.yaml --dataset golden/v2.json
+```
+
+v2 scores are never compared directly with v1 scores: they are different cases of
+different difficulty, so a number from one says nothing about the other. Compare a
+held-out run only with another held-out run. `compare` enforces this, because it
+refuses runs whose dataset files differ and picks its default baseline from runs on the
+same dataset file. With 12 cases, one case is about 8.3 pp, so a held-out run can
+show a large difference but cannot show a small one. Treat it as a sanity check, not a
+precise score.
 
 ## Evaluations
 
