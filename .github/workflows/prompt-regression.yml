@@ -33,7 +33,7 @@ jobs:
           fetch-depth: 0 # the base commit is needed for the diff and the base prompt versions
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.4.0 # setup-uv publishes exact version tags only (no v10 tag)
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
