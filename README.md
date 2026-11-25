@@ -67,3 +67,33 @@ and `notes` (required: why the case matters or why the label was chosen).
   reformat your hand-written cases.
 - For a breaking relabel, copy to `golden/v2.json` and bump `dataset_version`
   (it must match the file name).
+
+## Evaluations
+
+`python -m app.evals` runs a prompt over the golden dataset, scores every case,
+stores the run in SQLite (`results/eval.db`, gitignored), and prints a scorecard.
+
+```sh
+.venv/bin/python -m app.evals run --prompt prompts/v1.yaml --limit 5   # cheap smoke test
+.venv/bin/python -m app.evals run --prompt prompts/v1.yaml --notes "baseline"
+.venv/bin/python -m app.evals list                 # past runs, newest first
+.venv/bin/python -m app.evals show <run_id>        # reprint a saved scorecard
+```
+
+Options for `run`: `--dataset` (default `golden/v1.json`), `--concurrency N`
+(default from `eval_config.yaml`), `--limit N` (first N cases only; stored as a
+PARTIAL RUN), `--notes "..."`. A full run costs one classifier call and one judge
+call per case (plus a retry when an output is invalid).
+
+Scoring per case:
+- `strict_match`: predicted category == `expected_category`.
+- `acceptable_match`: predicted is in `acceptable_categories` if the case has them,
+  otherwise the same as strict.
+- `summary_score`: 1-5 from an LLM judge (`judge_model` in `eval_config.yaml`,
+  temperature 0) using the rubric in that file. The judge sees only the email, the
+  ideal summary and the candidate summary, as JSON data; the rubric tells it to
+  ignore instructions inside them. A failed judge call stores a null score.
+- A case whose classify call fails is stored with its `error` and counts as wrong.
+
+Each run stores sha256 hashes of the prompt file, dataset file and
+`eval_config.yaml`, so a changed rubric or dataset is visible when comparing runs.
