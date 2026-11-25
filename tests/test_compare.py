@@ -305,6 +305,95 @@ def test_html_report_trend_chart(tmp_path):
     assert "not judged" in html  # tooltip / table text for the no-judge run
 
 
+def _coverage_run(run_id: str, minutes: int, scored: int, total: int = 20, correct: int = 20, **kw) -> EvalRun:
+    return EvalRun(info=info(run_id, minutes, **kw), cases=[
+        make_case(f"case_{i:03d}", "billing", "billing" if i <= correct else "account",
+                  summary_score=4 if i <= scored else None)
+        for i in range(1, total + 1)
+    ])
+
+
+def test_trend_low_judge_coverage_is_a_gap_but_strict_still_plots(tmp_path):
+    db = tmp_path / "eval.db"
+    save_run(db, _coverage_run("20261125-120000-full", 0, scored=20))
+    save_run(db, _coverage_run("20261125-120100-lowc", 1, scored=12, correct=15))  # 60% coverage
+    save_run(db, _coverage_run("20261125-120200-edge", 2, scored=19))  # 95%: exactly at the threshold
+    save_run(db, _coverage_run("20261125-120300-edgl", 3, scored=18))  # 90%: below
+    save_run(db, _coverage_run("20261125-120400-nojg", 4, scored=0, judge_enabled=False))
+    cand = load_run(db, "20261125-120400-nojg")
+    points = trend_points(list_runs(db), cand.info, limit=10, min_judge_coverage=0.95)
+
+    by_id = {p.run_id: p for p in points}
+    assert by_id["20261125-120000-full"].judge == 4.0 and by_id["20261125-120000-full"].judge_gap is None
+    low = by_id["20261125-120100-lowc"]
+    assert low.judge is None and low.judge_gap == "judge coverage 12/20"
+    assert low.strict == 0.75  # strict accuracy is unaffected by judge coverage
+    assert by_id["20261125-120200-edge"].judge == 4.0
+    assert by_id["20261125-120300-edgl"].judge_gap == "judge coverage 18/20"
+    assert by_id["20261125-120400-nojg"].judge_gap == "not judged"
+    assert all(p.strict is not None for p in points)
+
+    # A looser threshold turns the low-coverage gaps back into points.
+    loose = {p.run_id: p for p in trend_points(list_runs(db), cand.info, limit=10, min_judge_coverage=0.5)}
+    assert loose["20261125-120100-lowc"].judge == 4.0
+
+    cmp = compare_runs(load_run(db, "20261125-120000-full"), cand)
+    html = render_report(cmp, points, generated_at=T0)
+    strict_svg, judge_svg = html.split("<svg")[1:3]
+    assert strict_svg.count("<polyline") == 1  # strict: one unbroken line through all 5 runs
+    assert len(strict_svg.split("<polyline")[1].split('points="')[1].split('"')[0].split()) == 5
+    # judge: full -> (gap) -> edge -> (gap) -> (gap): only single points, so no line segments
+    assert judge_svg.count("<polyline") == 0 and judge_svg.count('class="dot') == 2
+    assert "judge coverage 12/20" in judge_svg and "judge coverage 12/20" not in strict_svg
+    assert "Gaps: v1 12:01 (judge coverage 12/20); v1 12:03 (judge coverage 18/20); v1 12:04 (not judged)." in html
+
+
+def test_trend_judge_line_breaks_at_gap(tmp_path):
+    db = tmp_path / "eval.db"
+    for k, scored in enumerate([20, 20, 5, 20, 20]):
+        save_run(db, _coverage_run(f"20261125-12000{k}-r{k}xx", k, scored=scored))
+    cand = load_run(db, "20261125-120004-r4xx")
+    points = trend_points(list_runs(db), cand.info, limit=10)
+    html = render_report(compare_runs(load_run(db, "20261125-120000-r0xx"), cand), points, generated_at=T0)
+    judge_svg = html.split("<svg")[2]
+    assert judge_svg.count("<polyline") == 2  # two segments on either side of the gap
+
+
+def test_trend_x_labels_tell_same_version_runs_apart(tmp_path):
+    db = tmp_path / "eval.db"
+    save_run(db, _coverage_run("20261125-120000-aaaa", 0, scored=20))
+    save_run(db, _coverage_run("20261125-120030-bbbb", 0, scored=20))  # same version, same minute
+    save_run(db, _coverage_run("20261125-121500-cccc", 15, scored=20))
+    cand = load_run(db, "20261125-121500-cccc")
+    points = trend_points(list_runs(db), cand.info, limit=10)
+    html = render_report(compare_runs(load_run(db, "20261125-120000-aaaa"), cand), points, generated_at=T0)
+    strict_svg = html.split("<svg")[1]
+    assert "12:00 ·aaaa" in strict_svg and "12:00 ·bbbb" in strict_svg
+    assert ">12:15</tspan>" in strict_svg  # unique time: no id suffix needed
+
+
+def test_trend_x_labels_include_date_across_days(tmp_path):
+    db = tmp_path / "eval.db"
+    save_run(db, _coverage_run("20261124-120000-aaaa", -24 * 60, scored=20))
+    save_run(db, _coverage_run("20261125-120000-bbbb", 0, scored=20))
+    cand = load_run(db, "20261125-120000-bbbb")
+    html = render_report(compare_runs(load_run(db, "20261124-120000-aaaa"), cand),
+                         trend_points(list_runs(db), cand.info, limit=10), generated_at=T0)
+    assert ">11-24 12:00</tspan>" in html and ">11-25 12:00</tspan>" in html
+
+
+def test_trend_charts_have_axis_start_captions(tmp_path):
+    db = tmp_path / "eval.db"
+    save_run(db, _coverage_run("20261125-120000-aaaa", 0, scored=20, correct=19))
+    save_run(db, _coverage_run("20261125-120100-bbbb", 1, scored=20, correct=18))
+    cand = load_run(db, "20261125-120100-bbbb")
+    html = render_report(compare_runs(load_run(db, "20261125-120000-aaaa"), cand),
+                         trend_points(list_runs(db), cand.info, limit=10), generated_at=T0)
+    assert html.count('<p class="caption muted">') == 2
+    assert "Y-axis starts at 85%, not 0%" in html  # lowest 90% (already a 5% step) minus 5% padding
+    assert "Y-axis starts at 3.50, not 1 (the scale is 1–5)" in html
+
+
 def test_format_scorecard_marks_no_judge_run():
     text = format_scorecard(make_info(judge_enabled=False), compute_scorecard([make_case("case_001", summary_score=None)]))
     assert "NOT JUDGED" in text and "WARNING: judge failed" not in text

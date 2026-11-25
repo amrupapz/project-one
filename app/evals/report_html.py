@@ -20,12 +20,25 @@ class TrendPoint:
     started_at: datetime
     prompt_version: str
     strict: float | None
-    judge: float | None  # None for --no-judge runs
+    judge: float | None  # None = a gap in the judge chart; judge_gap says why
+    judge_gap: str | None = None  # "not judged" or "judge coverage 12/68"
 
 
-def trend_points(runs: list[RunSummary], candidate: RunInfo, limit: int) -> list[TrendPoint]:
+def _judge_gap(r: RunSummary, min_judge_coverage: float) -> str | None:
+    if not r.info.judge_enabled:
+        return "not judged"
+    if r.case_count == 0 or r.judged / r.case_count < min_judge_coverage:
+        return f"judge coverage {r.judged}/{r.case_count}"
+    return None
+
+
+def trend_points(
+    runs: list[RunSummary], candidate: RunInfo, limit: int, min_judge_coverage: float = 0.95
+) -> list[TrendPoint]:
     """The last `limit` full runs on the candidate's dataset, up to and including the
-    candidate, oldest first. `runs` is newest first (as list_runs returns it)."""
+    candidate, oldest first. `runs` is newest first (as list_runs returns it).
+    A run without the judge, or with judge coverage below min_judge_coverage, has no
+    judge value (a gap); its strict accuracy is still plotted."""
     picked = [
         r
         for r in runs
@@ -33,16 +46,20 @@ def trend_points(runs: list[RunSummary], candidate: RunInfo, limit: int) -> list
         and r.info.dataset_sha256 == candidate.dataset_sha256
         and (r.info.started_at, r.info.run_id) <= (candidate.started_at, candidate.run_id)
     ][:limit]
-    return [
-        TrendPoint(
-            run_id=r.info.run_id,
-            started_at=r.info.started_at,
-            prompt_version=r.info.prompt_version,
-            strict=r.strict_accuracy,
-            judge=r.mean_judge_score if r.info.judge_enabled else None,
+    points = []
+    for r in reversed(picked):
+        gap = _judge_gap(r, min_judge_coverage)
+        points.append(
+            TrendPoint(
+                run_id=r.info.run_id,
+                started_at=r.info.started_at,
+                prompt_version=r.info.prompt_version,
+                strict=r.strict_accuracy,
+                judge=None if gap else r.mean_judge_score,
+                judge_gap=gap,
+            )
         )
-        for r in reversed(picked)
-    ]
+    return points
 
 
 # --- formatting helpers ----------------------------------------------------------------
@@ -83,6 +100,18 @@ def _ticks(lo: float, hi: float, steps: tuple[float, ...]) -> list[float]:
     return out
 
 
+def _x_labels(points: list[TrendPoint]) -> list[str]:
+    """Second x-axis line: start time (UTC), with the date if the window spans days,
+    and the run id's random suffix if two runs would still look the same."""
+    spans_days = len({p.started_at.date() for p in points}) > 1
+    labels = [f"{p.started_at:%m-%d %H:%M}" if spans_days else f"{p.started_at:%H:%M}" for p in points]
+    keyed = [f"{p.prompt_version} {lab}" for p, lab in zip(points, labels)]
+    return [
+        f"{lab} ·{p.run_id.rsplit('-', 1)[-1]}" if keyed.count(k) > 1 else lab
+        for p, lab, k in zip(points, labels, keyed)
+    ]
+
+
 def _line_chart(
     title: str,
     points: list[TrendPoint],
@@ -92,10 +121,11 @@ def _line_chart(
     fmt,
     highlight: dict[str, str],
     steps: tuple[float, ...],
+    caption: str,
 ) -> str:
     """One series, one y-axis. None values break the line (e.g. --no-judge runs)."""
-    width, height = 640, 220
-    left, right, top, bottom = 52, 20, 16, 40
+    width, height = 640, 236
+    left, right, top, bottom = 52, 20, 16, 56
     plot_w, plot_h = width - left - right, height - top - bottom
     n = len(points)
 
@@ -124,18 +154,25 @@ def _line_chart(
         if len(seg) > 1:
             parts.append(f'<polyline class="line" points="{" ".join(seg)}"/>')
 
+    x_labels = _x_labels(points)
     for i, p in enumerate(points):
-        label = f"{p.prompt_version} · {p.started_at:%m-%d %H:%M}"
-        parts.append(f'<text class="axis" x="{x(i):.1f}" y="{height - bottom + 18}" text-anchor="middle">{_e(p.prompt_version)}</text>')
+        label = f"{p.prompt_version} · {p.started_at:%Y-%m-%d %H:%M} UTC"
+        anchor = "end" if i == n - 1 and n > 1 else "start" if i == 0 and n > 1 else "middle"
+        parts.append(
+            f'<text class="axis" x="{x(i):.1f}" y="{height - bottom + 18}" text-anchor="{anchor}">'
+            f'<tspan class="xv">{_e(p.prompt_version)}</tspan>'
+            f'<tspan x="{x(i):.1f}" dy="14">{_e(x_labels[i])}</tspan></text>'
+        )
         v = getattr(p, attr)
         role = highlight.get(p.run_id, "")
-        tip = f"{p.run_id} ({label}): " + ("not judged" if v is None else fmt(v))
+        gap = (p.judge_gap if attr == "judge" else None) or "no value"
+        tip = f"{p.run_id} ({label}): " + (gap if v is None else fmt(v))
         if role:
             tip += f" — {role}"
         if v is None:
             parts.append(
                 f'<g class="pt"><title>{_e(tip)}</title>'
-                f'<text class="axis muted" x="{x(i):.1f}" y="{top + plot_h - 4}" text-anchor="middle">n/a</text></g>'
+                f'<text class="axis muted" x="{x(i):.1f}" y="{top + plot_h - 4}" text-anchor="{anchor}">{_e(gap)}</text></g>'
             )
             continue
         cls = "dot hl" if role else "dot"
@@ -145,12 +182,14 @@ def _line_chart(
             f'<circle class="{cls}" cx="{x(i):.1f}" cy="{y(v):.1f}" r="{5 if role else 4}"/></g>'
         )
         if role:  # selective direct labels: only baseline and candidate
-            anchor = "end" if i == n - 1 and n > 1 else "start" if i == 0 and n > 1 else "middle"
             parts.append(
                 f'<text class="val" x="{x(i):.1f}" y="{y(v) - 12:.1f}" text-anchor="{anchor}">{_e(fmt(v))} {_e(role)}</text>'
             )
     parts.append("</svg>")
-    return f'<figure><figcaption>{_e(title)}</figcaption>{"".join(parts)}</figure>'
+    return (
+        f'<figure><figcaption>{_e(title)}</figcaption>{"".join(parts)}'
+        f'<p class="caption muted">{_e(caption)}</p></figure>'
+    )
 
 
 def _trend_section(points: list[TrendPoint], cmp: Comparison) -> str:
@@ -161,17 +200,28 @@ def _trend_section(points: list[TrendPoint], cmp: Comparison) -> str:
     s_lo = max(0.0, math.floor(min(stricts) * 20) / 20 - 0.05) if stricts else 0.0  # down to 5%, pad 5%
     judges = [p.judge for p in points if p.judge is not None]
     j_lo = max(1.0, math.floor(min(judges) * 2) / 2 - 0.5) if judges else 1.0
+    s_caption = (
+        "Y-axis starts at 0% (full scale)." if s_lo == 0
+        else f"Y-axis starts at {s_lo:.0%}, not 0%, so differences look larger than on a full scale."
+    )
     charts = _line_chart("Strict accuracy, last full runs", points, "strict", s_lo, 1.0,
-                         lambda v: f"{v:.1%}", highlight, (0.01, 0.02, 0.05, 0.1, 0.2, 0.25))
+                         lambda v: f"{v:.1%}", highlight, (0.01, 0.02, 0.05, 0.1, 0.2, 0.25), s_caption)
     if judges:
+        j_caption = (
+            "Y-axis starts at 1 (full 1–5 scale)." if j_lo == 1
+            else f"Y-axis starts at {j_lo:.2f}, not 1 (the scale is 1–5), so differences look larger."
+        )
+        gaps = [p for p in points if p.judge is None]
+        if gaps:
+            j_caption += " Gaps: " + "; ".join(f"{p.prompt_version} {p.started_at:%H:%M} ({p.judge_gap})" for p in gaps) + "."
         charts += _line_chart("Mean judge score (1–5), last full runs", points, "judge", j_lo, 5.0,
-                              lambda v: f"{v:.2f}", highlight, (0.25, 0.5, 1.0))
+                              lambda v: f"{v:.2f}", highlight, (0.25, 0.5, 1.0), j_caption)
     else:
         charts += '<p class="muted">No judged runs in this window; no judge-score trend.</p>'
     rows = "".join(
         f"<tr><td><code>{_e(p.run_id)}</code></td><td>{_e(p.prompt_version)}</td>"
         f"<td>{p.started_at:%Y-%m-%d %H:%M}</td><td class=\"num\">{_pct(p.strict)}</td>"
-        f"<td class=\"num\">{'not judged' if p.judge is None else f'{p.judge:.2f}'}</td></tr>"
+        f"<td class=\"num\">{_e(p.judge_gap) if p.judge is None else f'{p.judge:.2f}'}</td></tr>"
         for p in points
     )
     table = (
@@ -334,6 +384,8 @@ figure { margin:0; } figcaption { font-weight:500; margin-bottom:4px; }
 .chart .dot.hl { stroke:var(--text-primary); stroke-width:2; }
 .chart .hit { fill:transparent; }
 .chart .pt:hover .dot { r:7; }
+.chart .xv { fill:var(--text-secondary); }
+.caption { font-size:12px; margin:2px 0 0; }
 .chart .val { fill:var(--text-primary); font-size:11.5px; font-weight:500; }
 """
 

@@ -139,7 +139,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
     print(format_comparison(cmp))
 
     report_path = args.html or eval_config.db_path.parent / f"report_{candidate.info.run_id}.html"
-    trend = trend_points(runs, candidate.info, eval_config.compare.trend_runs)
+    trend = trend_points(runs, candidate.info, eval_config.compare.trend_runs, eval_config.compare.min_judge_coverage)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(render_report(cmp, trend, generated_at=datetime.now(UTC)), encoding="utf-8")
     print(f"\nReport: {report_path}")
