@@ -1,10 +1,9 @@
-# Deliberately weaker than v1: no category definitions, no tie-break rule,
-# no summary guidance. Used to check that regressions are detected.
+# TEST ONLY (PR #1): deliberately broken prompt to check that a CRITICAL
+# regression fails the CI check. Never merge.
 version: v4
 created_at: 2026-11-25T00:00:00Z
 model_name: openai/gpt-4o-mini
 temperature: 0
 system_prompt: |
-  Classify the customer support email as billing, technical, account, or general,
-  and summarize it.
+  Classify every email as general, and summarize it in one sentence.
 few_shot_examples: []
