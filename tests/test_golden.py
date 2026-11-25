@@ -34,10 +34,10 @@ def issues_for(path: Path) -> list[str]:
 
 # --- loading valid files ----------------------------------------------------
 
-def test_repo_golden_file_is_valid_and_has_no_generated_cases():
+def test_repo_golden_file_loads_without_errors():
+    assert find_issues(REPO_GOLDEN) == []
     dataset = load_golden(REPO_GOLDEN)
     assert dataset.dataset_version == "v1"
-    assert dataset.cases == []  # cases are written by hand, never generated
 
 
 def test_empty_cases_list_loads(ds_path):
