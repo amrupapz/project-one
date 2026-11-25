@@ -622,3 +622,17 @@ def test_cli_missing_api_key(monkeypatch, capsys, files):
                        "--dataset", str(files["dataset"])]) == 1
     assert "OPENROUTER_API_KEY" in capsys.readouterr().err
     assert not files["db"].exists()
+
+
+# --- baseline_prompt (CI) ---------------------------------------------------------------
+
+def test_baseline_prompt_default_and_repo_value():
+    assert EvalConfig(judge_model="a/b", judge_rubric="r").baseline_prompt == "prompts/v1.yaml"
+    config = EvalConfig.from_yaml(DEFAULT_EVAL_CONFIG_PATH)
+    assert (DEFAULT_EVAL_CONFIG_PATH.parent / config.baseline_prompt).is_file()
+
+
+@pytest.mark.parametrize("bad", ["v1.yaml", "/abs/prompts/v1.yaml", "prompts/v1.yml", "prompts/sub/v1.yaml", "golden/v1.json"])
+def test_baseline_prompt_must_be_a_prompt_file(bad):
+    with pytest.raises(ValidationError, match="baseline_prompt"):
+        EvalConfig(judge_model="a/b", judge_rubric="r", baseline_prompt=bad)

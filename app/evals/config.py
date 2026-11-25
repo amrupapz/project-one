@@ -11,6 +11,8 @@ from app.config import MODEL_NAME_PATTERN, NonEmptyStr
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_EVAL_CONFIG_PATH = REPO_ROOT / "eval_config.yaml"
+# Repo-relative path to a prompt file, e.g. prompts/v1.yaml (it is also read from git).
+BASELINE_PROMPT_PATTERN = r"^prompts/[^/]+\.yaml$"
 
 
 def file_sha256(path: str | Path) -> str:
@@ -49,6 +51,8 @@ class EvalConfig(BaseModel):
     judge_rubric: NonEmptyStr
     db_path: Path = Path("results/eval.db")
     compare: CompareConfig = CompareConfig()
+    # CI compares a brand-new prompt file against the base branch's copy of this prompt.
+    baseline_prompt: Annotated[str, StringConstraints(pattern=BASELINE_PROMPT_PATTERN)] = "prompts/v1.yaml"
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> Self:
