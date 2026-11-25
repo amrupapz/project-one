@@ -595,8 +595,9 @@ async def test_rubric_change_changes_eval_config_hash(files, billing_bot):
 
 
 def test_cli_run_list_show(monkeypatch, capsys, files, billing_bot):
-    clients = iter(billing_bot)
-    monkeypatch.setattr("app.evals.cli.make_client", lambda: next(clients))
+    classifier, judge = billing_bot
+    monkeypatch.setattr("app.evals.cli.make_client", lambda: classifier)
+    monkeypatch.setattr("app.evals.cli.make_judge_client", lambda config: judge)
     base = ["--eval-config", str(files["config"])]
     assert evals_main([*base, "run", "--prompt", str(files["prompt"]), "--dataset", str(files["dataset"]),
                        "--limit", "2", "--notes", "FIXTURE smoke"]) == 0

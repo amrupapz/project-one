@@ -12,6 +12,7 @@ from app.classify import classify
 from app.config import PromptConfig
 from app.errors import ClassificationError
 from app.evals.config import EvalConfig, file_sha256
+from app.evals.judge_client import error_code, make_judge_client
 from app.evals.models import CaseResult, EvalRun, RunInfo
 from app.evals.scoring import acceptable_match, judge_summary, strict_match
 from app.golden.io import load_golden
@@ -19,6 +20,7 @@ from app.golden.models import GoldenCase, GoldenDataset
 from app.llm import make_client
 
 ProgressFn = Callable[[int, int], None]  # (done, total)
+FailureFn = Callable[[str, str, str], None]  # (case_id, stage "classify" | "judge", error code)
 
 
 def new_run_id(now: datetime) -> str:
@@ -31,6 +33,7 @@ async def _run_case(
     eval_config: EvalConfig,
     classifier_client: instructor.AsyncInstructor,
     judge_client: instructor.AsyncInstructor,
+    on_failure: FailureFn | None,
 ) -> CaseResult:
     labels = {
         "case_id": case.id,
@@ -44,6 +47,8 @@ async def _run_case(
     try:
         result = await classify(case.input, prompt_config, client=classifier_client)
     except ClassificationError as exc:
+        if on_failure:
+            on_failure(case.id, "classify", error_code(exc))
         return CaseResult(**labels, error=str(exc))
 
     verdict = await judge_summary(
@@ -55,6 +60,8 @@ async def _run_case(
         max_tokens=eval_config.judge_max_tokens,
         client=judge_client,
     )
+    if verdict.error_code is not None and on_failure:
+        on_failure(case.id, "judge", verdict.error_code)
     return CaseResult(
         **labels,
         predicted_category=result.category,
@@ -79,10 +86,12 @@ async def run_eval(
     classifier_client: instructor.AsyncInstructor | None = None,
     judge_client: instructor.AsyncInstructor | None = None,
     on_progress: ProgressFn | None = None,
+    on_failure: FailureFn | None = None,
 ) -> list[CaseResult]:
     """Results in dataset order. A failed classify becomes an error row; the run continues.
 
-    Each case holds one semaphore slot for both its classify and judge calls.
+    Each case holds one semaphore slot for both its classify and judge calls. The judge
+    client's requests are additionally rate-limited (see judge_client.py).
     """
     concurrency = concurrency or eval_config.default_concurrency
     if concurrency < 1:
@@ -90,7 +99,7 @@ async def run_eval(
     if limit is not None and limit < 1:
         raise ValueError("limit must be >= 1")
     classifier_client = classifier_client or make_client()
-    judge_client = judge_client or make_client()
+    judge_client = judge_client or make_judge_client(eval_config)
     cases = dataset.cases[:limit] if limit else dataset.cases
 
     semaphore = asyncio.Semaphore(concurrency)
@@ -99,7 +108,7 @@ async def run_eval(
     async def bounded(case: GoldenCase) -> CaseResult:
         nonlocal done
         async with semaphore:
-            result = await _run_case(case, prompt_config, eval_config, classifier_client, judge_client)
+            result = await _run_case(case, prompt_config, eval_config, classifier_client, judge_client, on_failure)
         done += 1
         if on_progress:
             on_progress(done, len(cases))
@@ -119,6 +128,7 @@ async def execute_run(
     classifier_client: instructor.AsyncInstructor | None = None,
     judge_client: instructor.AsyncInstructor | None = None,
     on_progress: ProgressFn | None = None,
+    on_failure: FailureFn | None = None,
 ) -> EvalRun:
     """Load the three input files, run the eval, and return the full run record (not yet saved)."""
     prompt_config = PromptConfig.from_yaml(prompt_path)
@@ -152,5 +162,6 @@ async def execute_run(
         classifier_client=classifier_client,
         judge_client=judge_client,
         on_progress=on_progress,
+        on_failure=on_failure,
     )
     return EvalRun(info=info, cases=cases)

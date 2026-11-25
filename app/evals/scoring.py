@@ -8,6 +8,7 @@ import openai
 from instructor.core.exceptions import InstructorError
 from pydantic import BaseModel, Field, StringConstraints
 
+from app.evals.judge_client import error_code
 from app.llm import MAX_RETRIES
 from app.schemas import Category
 
@@ -32,10 +33,12 @@ class JudgeVerdict(BaseModel):
 
 
 class JudgeOutcome(BaseModel):
-    """score is None when the judge call failed; reason then holds the error text."""
+    """score is None when the judge call failed; reason then holds a short error
+    description and error_code a compact code such as '429'."""
 
     score: int | None
     reason: str
+    error_code: str | None = None
 
 
 def build_judge_messages(email: str, ideal_summary: str, candidate_summary: str, rubric: str) -> list[dict[str, str]]:
@@ -74,5 +77,7 @@ async def judge_summary(
             max_retries=MAX_RETRIES,
         )
     except (InstructorError, openai.OpenAIError) as exc:
-        return JudgeOutcome(score=None, reason=f"judge failed: {type(exc).__name__}: {exc}"[:1000])
+        code = error_code(exc)
+        first_line = str(exc).strip().splitlines()[0] if str(exc).strip() else ""
+        return JudgeOutcome(score=None, reason=f"judge failed ({code}): {first_line}"[:300], error_code=code)
     return JudgeOutcome(score=verdict.score, reason=verdict.reason)

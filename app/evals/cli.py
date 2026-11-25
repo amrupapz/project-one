@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import logging
 import sys
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from pydantic import ValidationError
 
 from app.errors import MissingAPIKeyError
 from app.evals.config import DEFAULT_EVAL_CONFIG_PATH, REPO_ROOT, EvalConfig
+from app.evals.judge_client import make_judge_client
 from app.evals.runner import execute_run
 from app.evals.scorecard import compute_scorecard, format_scorecard
 from app.evals.store import list_runs, load_run, save_run
@@ -26,14 +28,30 @@ def _positive_int(value: str) -> int:
 
 
 def _progress(done: int, total: int) -> None:
-    print(f"\r  {done}/{total} cases", end="" if done < total else "\n", file=sys.stderr, flush=True)
+    if sys.stderr.isatty():
+        print(f"\r  {done}/{total} cases", end="" if done < total else "\n", file=sys.stderr, flush=True)
+    elif done == total:  # logs and pipes: no live counter, just the final count
+        print(f"  {done}/{total} cases", file=sys.stderr, flush=True)
+
+
+def _failure(case_id: str, stage: str, code: str) -> None:
+    # One short line per failure. On a terminal, first clear the progress counter line.
+    clear = "\r\033[K" if sys.stderr.isatty() else ""
+    print(f"{clear}  {stage} failed: {case_id} ({code})", file=sys.stderr, flush=True)
+
+
+def _quiet_library_logs() -> None:
+    # instructor logs every failed API call with the full response body at ERROR level.
+    # Failures are reported compactly by _failure() and stored in the run instead.
+    logging.getLogger("instructor").setLevel(logging.CRITICAL)
 
 
 def cmd_run(args: argparse.Namespace) -> int:
     eval_config = EvalConfig.from_yaml(args.eval_config)
+    _quiet_library_logs()
     # Build both clients up front so a missing key fails before any work starts.
     classifier_client = make_client()
-    judge_client = make_client()
+    judge_client = make_judge_client(eval_config)
     run = asyncio.run(
         execute_run(
             args.prompt,
@@ -45,6 +63,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             classifier_client=classifier_client,
             judge_client=judge_client,
             on_progress=_progress,
+            on_failure=_failure,
         )
     )
     save_run(eval_config.db_path, run)

@@ -23,11 +23,16 @@ MAX_RETRIES = 1
 CLASSIFIER_MAX_TOKENS = 300
 
 
+def make_openrouter_client(*, max_retries: int | None = None) -> AsyncOpenAI:
+    """Raw OpenRouter client with the key from env. max_retries=None keeps the SDK default."""
+    api_key = os.environ.get(API_KEY_ENV_VAR)
+    if not api_key:
+        raise MissingAPIKeyError(f"{API_KEY_ENV_VAR} is not set (see .env.example)")
+    if max_retries is None:
+        return AsyncOpenAI(base_url=OPENROUTER_BASE_URL, api_key=api_key)
+    return AsyncOpenAI(base_url=OPENROUTER_BASE_URL, api_key=api_key, max_retries=max_retries)
+
+
 def make_client(openai_client: AsyncOpenAI | None = None) -> instructor.AsyncInstructor:
     """Wrap an AsyncOpenAI client. Builds an OpenRouter client from env if none is given."""
-    if openai_client is None:
-        api_key = os.environ.get(API_KEY_ENV_VAR)
-        if not api_key:
-            raise MissingAPIKeyError(f"{API_KEY_ENV_VAR} is not set (see .env.example)")
-        openai_client = AsyncOpenAI(base_url=OPENROUTER_BASE_URL, api_key=api_key)
-    return instructor.from_openai(openai_client, mode=INSTRUCTOR_MODE)
+    return instructor.from_openai(openai_client or make_openrouter_client(), mode=INSTRUCTOR_MODE)

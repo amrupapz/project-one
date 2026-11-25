@@ -8,6 +8,9 @@ from app.golden.models import Difficulty
 from app.schemas import Category
 
 
+JUDGE_FAILURE_WARN_FRACTION = 0.05
+
+
 @dataclass(frozen=True)
 class GroupAccuracy:
     total: int
@@ -36,6 +39,12 @@ class Scorecard:
     output_tokens: int
     errors: int
     failures: list[CaseResult]  # strict misses and errors, dataset order
+    judge_attempts: int = 0  # cases that classified successfully, so the judge was called
+    judge_failures: int = 0  # of those, how many got no score
+
+    @property
+    def judge_unreliable(self) -> bool:
+        return self.judge_attempts > 0 and self.judge_failures / self.judge_attempts > JUDGE_FAILURE_WARN_FRACTION
 
 
 def percentile(values: list[float], p: float) -> float | None:
@@ -70,6 +79,8 @@ def compute_scorecard(cases: list[CaseResult]) -> Scorecard:
         output_tokens=sum(c.output_tokens or 0 for c in cases),
         errors=sum(1 for c in cases if c.error is not None),
         failures=[c for c in cases if not c.strict_match],
+        judge_attempts=sum(1 for c in cases if c.error is None),
+        judge_failures=sum(1 for c in cases if c.error is None and c.summary_score is None),
     )
 
 
@@ -99,6 +110,12 @@ def format_scorecard(info: RunInfo, card: Scorecard) -> str:
         "Mean judge score:     "
         + ("-" if card.mean_judge_score is None else f"{card.mean_judge_score:.2f} / 5")
         + f"  ({card.judged}/{o.total} scored)",
+    ]
+    if card.judge_unreliable:
+        lines.append(
+            f"WARNING: judge failed on {card.judge_failures} of {card.judge_attempts} cases; judge mean is unreliable"
+        )
+    lines += [
         f"Latency p50 / p95:    {_ms(card.latency_p50_ms)} / {_ms(card.latency_p95_ms)}",
         f"Tokens in / out:      {card.input_tokens:,} / {card.output_tokens:,}",
         f"Errors:               {card.errors}",

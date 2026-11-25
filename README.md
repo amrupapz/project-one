@@ -95,5 +95,12 @@ Scoring per case:
   ignore instructions inside them. A failed judge call stores a null score.
 - A case whose classify call fails is stored with its `error` and counts as wrong.
 
+Judge requests are rate-limited across the whole run to `judge_requests_per_minute`
+(default 15; OpenRouter allows new accounts 20/min on some models), so a full run of
+68 cases takes about 4-5 minutes. A 429 is retried up to 3 times, honoring
+Retry-After (capped at 60 s); every queued judge call waits out that pause. After
+that the case gets a null score, and the scorecard warns when more than 5% of judge
+calls failed. Failures print as one short line each, e.g. `judge failed: case_012 (429)`.
+
 Each run stores sha256 hashes of the prompt file, dataset file and
 `eval_config.yaml`, so a changed rubric or dataset is visible when comparing runs.
