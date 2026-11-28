@@ -12,6 +12,17 @@ compare:  # thresholds for `python -m app.evals compare`
   judge_score_drop_warning: 0.3 # mean judge score drop (1-5 scale) -> WARNING, never CRITICAL
   min_judge_coverage: 0.95      # below this share of scored cases, judge delta is ignored
   trend_runs: 10                # full runs shown in the HTML trend chart
+drift:  # slow-drift check: `python -m app.evals drift`, also shown in `compare` and the HTML report
+  # Mean of the last `window` qualifying runs (full, no errors, same prompt version, prompt
+  # file, classifier model and dataset) vs the mean of the `window` runs before them.
+  # A 7-run mean wobbles much less than a single run (noise shrinks by about sqrt(7)),
+  # so these thresholds are tighter than the per-run compare thresholds (3 / 8 pp).
+  window: 7
+  min_history: 14            # 2 x window: the reference is a full 7-run mean, never one noisy run
+  drop_warning_pp: 2.0       # window mean below the reference mean by this much (strict or acceptable) -> DRIFT WARNING
+  drop_critical_pp: 4.0      # -> DRIFT CRITICAL
+  floor_strict_pct: null     # e.g. 85.0: window strict mean below this -> DRIFT CRITICAL; null = off
+  min_judge_coverage: 0.95   # judge mean is shown only if this share of runs in both windows has one; never used for status
 judge_rubric: |
   You grade a one-sentence summary of a customer support email. The summary was
   written by an automated system.
