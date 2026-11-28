@@ -153,6 +153,10 @@ runs), and exits with the status:
 | 2 | CRITICAL | strict drop ≥ `strict_drop_critical_pp` (8) |
 | 3 | error | refused comparison, unknown run id, no baseline, bad arguments |
 
+`compare` also prints the slow-drift line for the candidate's prompt (see
+[Slow-drift detection](#slow-drift-detection)) and exits with the **worse** of the two
+statuses, so a PASS compare can still exit 1 on DRIFT WARNING.
+
 Thresholds live under `compare:` in `eval_config.yaml`. The status line always
 carries the flip counts, e.g. `PASS (strict -2.9 pp; 4 regressions, 2 improvements)`,
 and the report lists every regression whatever the status. Acceptable-match flips
@@ -174,14 +178,18 @@ How runs are matched and when the result is flagged:
 .venv/bin/python -m app.evals repeat --prompt prompts/v1.yaml --n 5 --no-judge
 ```
 
-`repeat` runs the prompt N times (sequentially, never judged, not saved) and prints
-the strict accuracy of each run, their mean, stdev and spread, and every case whose
-prediction changed between runs. A compare delta inside that spread is likely noise.
+`repeat` runs the prompt N times (sequentially, never judged, not saved by default)
+and prints the strict accuracy of each run, their mean, stdev and spread, and every
+case whose prediction changed between runs. A compare delta inside that spread is
+likely noise. With `--save`, each run is stored in `eval.db` with the notes
+`repeat k/N` (shown by `list`). Saved repeat runs are **real runs** for drift
+purposes: they count towards the moving average like any other full run.
 
 ### Slack alerts
 
 Set `SLACK_WEBHOOK_URL` (an incoming webhook) and `compare` posts the status line,
-the strict / acceptable / judge numbers, any warnings and the report path. It never
+the strict / acceptable / judge numbers, any warnings, the drift line when drift is
+not OK, and the report path. It never
 sends email text. Unset means no alert; `--no-alert` skips it; a failed post prints a
 warning and does not change the exit code. Other channels can implement the
 `Alerter` protocol in `app/evals/alerts.py`.
@@ -225,11 +233,58 @@ Limits:
   Runs record `prompt_file_sha256`, but two different files both called `v2` are
   easy to confuse.
 
-### Not built yet: slow-drift detection
+## Slow-drift detection
 
-Each PR is compared with its own base, so a series of small drops that each stay
-under the WARNING threshold never fails a check. Catching that needs a **stored run
-history**: for example, a scheduled job that runs the production prompt on `main`,
-keeps the results somewhere persistent (a committed results file, a database or an
-artifact store, since `results/` is gitignored and CI starts fresh), and alerts when
-the latest run falls below a 7-run moving average by some margin.
+Each compare looks at two runs, so a series of small drops that each stay under the
+3 pp WARNING threshold never fails one. The drift check compares the mean of the last
+7 qualifying runs with the mean of the 7 qualifying runs before them:
+
+```sh
+.venv/bin/python -m app.evals drift --prompt-version v3                     # dataset default golden/v1.json
+.venv/bin/python -m app.evals drift --prompt-version v3 --dataset golden/v2.json
+```
+
+It prints the window mean, reference mean and delta for strict and acceptable
+accuracy, the status and the run ids used. A run qualifies when it is a **full** run
+(no `--limit`), has **no errored cases**, and matches the prompt version, the dataset
+file (`dataset_sha256`), and the prompt file (`prompt_file_sha256`) and classifier
+model of the newest such run. An edited prompt file or a model switch therefore starts
+a new history instead of showing up as drift. Prompt versions and datasets are never
+mixed.
+
+| Exit | Status | Meaning |
+|---|---|---|
+| 0 | NOT ENOUGH HISTORY | fewer than `min_history` (14 = 2 × window) qualifying runs; never warns |
+| 0 | OK | both means within the thresholds |
+| 1 | DRIFT WARNING | strict or acceptable 7-run mean dropped ≥ `drop_warning_pp` (2) |
+| 2 | DRIFT CRITICAL | dropped ≥ `drop_critical_pp` (4), or the strict window mean is below `floor_strict_pct` (off by default) |
+| 3 | error | bad arguments, missing dataset file |
+
+Settings live under `drift:` in `eval_config.yaml`. They are tighter than the per-run
+thresholds because a mean of 7 runs wobbles much less than one run. The mean judge
+score is shown only if at least 95% of the runs in both windows have one, and it never
+changes the status. `repeat` runs are never judged, so a history built with
+`repeat --save` shows no judge drift.
+
+The `compare` output and HTML report carry one line, e.g. `Drift (7-run average):
+DRIFT WARNING (strict 90.0% vs 93.5% over the previous 7 runs, -3.5 pp; ...)`,
+computed as of the candidate run. The strict-accuracy trend chart gets a dashed
+7-run moving-average line for the candidate's prompt.
+
+To build history, run the production prompt repeatedly and save the runs:
+
+```sh
+.venv/bin/python -m app.evals repeat --prompt prompts/v3.yaml --n 14 --save
+.venv/bin/python -m app.evals drift --prompt-version v3
+```
+
+Back-to-back runs only measure noise at one moment, so right after this the check
+says OK. Drift shows up as new runs arrive over days or weeks, for example a daily
+`.venv/bin/python -m app.evals run --prompt prompts/v3.yaml --no-judge` (or
+`repeat --n 2 --save`). Each new run pushes the oldest one out of the reference window.
+
+**Not wired into CI.** The pull-request workflow uses a fresh `results/ci/eval.db`
+with no history, so the drift check would always say NOT ENOUGH HISTORY. Running it
+in CI would need the run history to be stored between workflow runs (for example as
+a cached or committed database file, or a scheduled job writing to persistent
+storage, since `results/` is gitignored). That is out of scope for now.

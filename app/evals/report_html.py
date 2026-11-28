@@ -10,6 +10,7 @@ from datetime import datetime
 from html import escape
 
 from app.evals.compare import Comparison, Delta, Flip
+from app.evals.drift import Drift, drift_line
 from app.evals.models import CaseResult, RunInfo
 from app.evals.store import RunSummary
 
@@ -22,6 +23,7 @@ class TrendPoint:
     strict: float | None
     judge: float | None  # None = a gap in the judge chart; judge_gap says why
     judge_gap: str | None = None  # "not judged" or "judge coverage 12/68"
+    ma: float | None = None  # strict moving average (drift window) ending at this run, if it has one
 
 
 def _judge_gap(r: RunSummary, min_judge_coverage: float) -> str | None:
@@ -33,12 +35,17 @@ def _judge_gap(r: RunSummary, min_judge_coverage: float) -> str | None:
 
 
 def trend_points(
-    runs: list[RunSummary], candidate: RunInfo, limit: int, min_judge_coverage: float = 0.95
+    runs: list[RunSummary],
+    candidate: RunInfo,
+    limit: int,
+    min_judge_coverage: float = 0.95,
+    moving_average: dict[str, float] | None = None,
 ) -> list[TrendPoint]:
     """The last `limit` full runs on the candidate's dataset, up to and including the
     candidate, oldest first. `runs` is newest first (as list_runs returns it).
     A run without the judge, or with judge coverage below min_judge_coverage, has no
-    judge value (a gap); its strict accuracy is still plotted."""
+    judge value (a gap); its strict accuracy is still plotted. `moving_average` maps run_id
+    to the strict moving average at that run (see drift.strict_moving_average)."""
     picked = [
         r
         for r in runs
@@ -57,6 +64,7 @@ def trend_points(
                 strict=r.strict_accuracy,
                 judge=None if gap else r.mean_judge_score,
                 judge_gap=gap,
+                ma=(moving_average or {}).get(r.info.run_id),
             )
         )
     return points
@@ -122,8 +130,10 @@ def _line_chart(
     highlight: dict[str, str],
     steps: tuple[float, ...],
     caption: str,
+    ma_attr: str | None = None,
 ) -> str:
-    """One series, one y-axis. None values break the line (e.g. --no-judge runs)."""
+    """One series, one y-axis. None values break the line (e.g. --no-judge runs).
+    With ma_attr, that attribute is drawn as a dashed moving-average line behind it."""
     width, height = 640, 236
     left, right, top, bottom = 52, 20, 16, 56
     plot_w, plot_h = width - left - right, height - top - bottom
@@ -142,17 +152,22 @@ def _line_chart(
         parts.append(f'<line class="grid" x1="{left}" x2="{width - right}" y1="{y(v):.1f}" y2="{y(v):.1f}"/>')
         parts.append(f'<text class="axis" x="{left - 8}" y="{y(v) + 4:.1f}" text-anchor="end">{_e(fmt(v))}</text>')
 
-    segments: list[list[str]] = [[]]
-    for i, p in enumerate(points):
-        v = getattr(p, attr)
-        if v is None:
-            if segments[-1]:
-                segments.append([])
-            continue
-        segments[-1].append(f"{x(i):.1f},{y(v):.1f}")
-    for seg in segments:
-        if len(seg) > 1:
-            parts.append(f'<polyline class="line" points="{" ".join(seg)}"/>')
+    def polylines(a: str, cls: str) -> None:
+        segments: list[list[str]] = [[]]
+        for i, p in enumerate(points):
+            v = getattr(p, a)
+            if v is None:
+                if segments[-1]:
+                    segments.append([])
+                continue
+            segments[-1].append(f"{x(i):.1f},{y(v):.1f}")
+        for seg in segments:
+            if len(seg) > 1:
+                parts.append(f'<polyline class="{cls}" points="{" ".join(seg)}"/>')
+
+    if ma_attr:  # behind the main series
+        polylines(ma_attr, "ma")
+    polylines(attr, "line")
 
     x_labels = _x_labels(points)
     for i, p in enumerate(points):
@@ -192,11 +207,11 @@ def _line_chart(
     )
 
 
-def _trend_section(points: list[TrendPoint], cmp: Comparison) -> str:
+def _trend_section(points: list[TrendPoint], cmp: Comparison, ma_window: int | None = None) -> str:
     if len(points) < 2:
         return "<section><h2>Trend</h2><p class=\"muted\">Fewer than two full runs on this dataset; no trend yet.</p></section>"
     highlight = {cmp.baseline.run_id: "baseline", cmp.candidate.run_id: "candidate"}
-    stricts = [p.strict for p in points if p.strict is not None]
+    stricts = [p.strict for p in points if p.strict is not None] + [p.ma for p in points if p.ma is not None]
     s_lo = max(0.0, math.floor(min(stricts) * 20) / 20 - 0.05) if stricts else 0.0  # down to 5%, pad 5%
     judges = [p.judge for p in points if p.judge is not None]
     j_lo = max(1.0, math.floor(min(judges) * 2) / 2 - 0.5) if judges else 1.0
@@ -204,8 +219,15 @@ def _trend_section(points: list[TrendPoint], cmp: Comparison) -> str:
         "Y-axis starts at 0% (full scale)." if s_lo == 0
         else f"Y-axis starts at {s_lo:.0%}, not 0%, so differences look larger than on a full scale."
     )
+    has_ma = any(p.ma is not None for p in points)
+    if has_ma:
+        s_caption += (
+            f" Dashed: {ma_window}-run moving average of prompt {cmp.candidate.prompt_version} "
+            "(full runs without errors, same prompt file, model and dataset)."
+        )
     charts = _line_chart("Strict accuracy, last full runs", points, "strict", s_lo, 1.0,
-                         lambda v: f"{v:.1%}", highlight, (0.01, 0.02, 0.05, 0.1, 0.2, 0.25), s_caption)
+                         lambda v: f"{v:.1%}", highlight, (0.01, 0.02, 0.05, 0.1, 0.2, 0.25), s_caption,
+                         ma_attr="ma" if has_ma else None)
     if judges:
         j_caption = (
             "Y-axis starts at 1 (full 1–5 scale)." if j_lo == 1
@@ -221,12 +243,16 @@ def _trend_section(points: list[TrendPoint], cmp: Comparison) -> str:
     rows = "".join(
         f"<tr><td><code>{_e(p.run_id)}</code></td><td>{_e(p.prompt_version)}</td>"
         f"<td>{p.started_at:%Y-%m-%d %H:%M}</td><td class=\"num\">{_pct(p.strict)}</td>"
-        f"<td class=\"num\">{_e(p.judge_gap) if p.judge is None else f'{p.judge:.2f}'}</td></tr>"
+        f"<td class=\"num\">{_e(p.judge_gap) if p.judge is None else f'{p.judge:.2f}'}</td>"
+        + (f"<td class=\"num\">{_pct(p.ma)}</td>" if has_ma else "")
+        + "</tr>"
         for p in points
     )
     table = (
         "<details><summary>Trend data as a table</summary><table><thead><tr><th>Run</th><th>Prompt</th>"
-        "<th>Started (UTC)</th><th class=\"num\">Strict</th><th class=\"num\">Judge</th></tr></thead>"
+        "<th>Started (UTC)</th><th class=\"num\">Strict</th><th class=\"num\">Judge</th>"
+        + (f"<th class=\"num\">{ma_window}-run avg</th>" if has_ma else "")
+        + "</tr></thead>"
         f"<tbody>{rows}</tbody></table></details>"
     )
     return f"<section id=\"trend\"><h2>Trend ({len(points)} full runs)</h2><div class=\"charts\">{charts}</div>{table}</section>"
@@ -379,6 +405,7 @@ figure { margin:0; } figcaption { font-weight:500; margin-bottom:4px; }
 .chart { width:100%; height:auto; }
 .chart .grid { stroke:var(--grid); stroke-width:1; }
 .chart .axis { fill:var(--muted); font-size:11px; }
+.chart .ma { fill:none; stroke:var(--text-secondary); stroke-width:1.5; stroke-dasharray:5 4; }
 .chart .line { fill:none; stroke:var(--series-1); stroke-width:2; stroke-linejoin:round; }
 .chart .dot { fill:var(--series-1); stroke:var(--surface-1); stroke-width:2; }
 .chart .dot.hl { stroke:var(--text-primary); stroke-width:2; }
@@ -390,7 +417,9 @@ figure { margin:0; } figcaption { font-weight:500; margin-bottom:4px; }
 """
 
 
-def render_report(cmp: Comparison, trend: list[TrendPoint], *, generated_at: datetime) -> str:
+def render_report(
+    cmp: Comparison, trend: list[TrendPoint], *, generated_at: datetime, drift: Drift | None = None
+) -> str:
     status = cmp.status.name
     warnings = "".join(f"<li>{_e(w)}</li>" for w in cmp.warnings)
     reasons = "".join(f"<li>{_e(r)}</li>" for r in cmp.status_reasons)
@@ -419,11 +448,12 @@ def render_report(cmp: Comparison, trend: list[TrendPoint], *, generated_at: dat
 <div class="muted">Generated {generated_at:%Y-%m-%d %H:%M:%S %Z} · {cmp.shared_cases} shared cases</div>
 <div class="status {status}" role="status"><span class="icon" aria-hidden="true">{STATUS_ICON[status]}</span><span>{_e(cmp.headline)}</span></div>
 {f'<ul class="reasons">{reasons}</ul>' if reasons else ''}
+{f'<p class="drift">{_e(drift_line(drift))}</p>' if drift is not None else ''}
 {f'<div class="warnings"><strong>Warnings</strong><ul>{warnings}</ul></div>' if warnings else ''}
 {f'<ul class="muted">{notes}</ul>' if notes else ''}
 <section><h2>Runs</h2><div class="metas">{_run_meta("Baseline", cmp.baseline)}{_run_meta("Candidate", cmp.candidate)}</div></section>
 {_scorecard(cmp)}
 {flips}
-{_trend_section(trend, cmp)}
+{_trend_section(trend, cmp, drift.window if drift is not None else None)}
 </div></body></html>
 """

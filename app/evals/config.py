@@ -39,6 +39,27 @@ class CompareConfig(BaseModel):
         return self
 
 
+class DriftConfig(BaseModel):
+    """Slow-drift check: mean of the last `window` qualifying runs vs the `window` runs before."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    window: int = Field(default=7, ge=2, le=100)
+    min_history: int = Field(default=14, ge=3)
+    drop_warning_pp: float = Field(default=2.0, gt=0)
+    drop_critical_pp: float = Field(default=4.0, gt=0)
+    floor_strict_pct: float | None = Field(default=None, gt=0, le=100)  # None = off
+    min_judge_coverage: float = Field(default=0.95, gt=0, le=1)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> Self:
+        if self.drop_critical_pp < self.drop_warning_pp:
+            raise ValueError("drop_critical_pp must be >= drop_warning_pp")
+        if self.min_history < self.window + 1:
+            raise ValueError("min_history must be >= window + 1")
+        return self
+
+
 class EvalConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -51,6 +72,7 @@ class EvalConfig(BaseModel):
     judge_rubric: NonEmptyStr
     db_path: Path = Path("results/eval.db")
     compare: CompareConfig = CompareConfig()
+    drift: DriftConfig = DriftConfig()
     # CI compares a brand-new prompt file against the base branch's copy of this prompt.
     baseline_prompt: Annotated[str, StringConstraints(pattern=BASELINE_PROMPT_PATTERN)] = "prompts/v1.yaml"
 

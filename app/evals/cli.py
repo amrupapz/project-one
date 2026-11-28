@@ -1,4 +1,4 @@
-"""python -m app.evals {run,list,show,compare,repeat}"""
+"""python -m app.evals {run,list,show,compare,drift,repeat}"""
 
 import argparse
 import asyncio
@@ -12,7 +12,8 @@ from pydantic import ValidationError
 from app.errors import MissingAPIKeyError
 from app.evals.alerts import AlertError, SlackAlerter
 from app.evals.compare import compare_runs, format_comparison
-from app.evals.config import DEFAULT_EVAL_CONFIG_PATH, REPO_ROOT, EvalConfig
+from app.evals.config import DEFAULT_EVAL_CONFIG_PATH, REPO_ROOT, EvalConfig, file_sha256
+from app.evals.drift import compute_drift, drift_line, format_drift, strict_moving_average
 from app.evals.judge_client import make_judge_client
 from app.evals.repeat import format_spread, repeat_runs, repeat_spread
 from app.evals.report_html import render_report, trend_points
@@ -102,10 +103,12 @@ def cmd_list(args: argparse.Namespace) -> int:
     print(header)
     for r in runs:
         partial = f"  PARTIAL RUN (limit {r.info.case_limit})" if r.info.is_partial else ""
+        notes = r.info.notes or ""
+        notes = f"  {notes[:40]}{'…' if len(notes) > 40 else ''}" if notes else ""
         print(
             f"{r.info.run_id:<22} {r.info.started_at:%Y-%m-%d %H:%M:%S} {r.info.prompt_version:<7} "
             f"{r.info.classifier_model:<28} {r.case_count:>5} {_acc(r.strict_accuracy):>7} "
-            f"{_acc(r.acceptable_accuracy):>7} {r.errors:>6}{partial}"
+            f"{_acc(r.acceptable_accuracy):>7} {r.errors:>6}{partial}{notes}"
         )
     return 0
 
@@ -136,23 +139,35 @@ def cmd_compare(args: argparse.Namespace) -> int:
         baseline = load_run(eval_config.db_path, default.run_id)
 
     cmp = compare_runs(baseline, candidate, eval_config.compare)
+    c = candidate.info
+    drift = compute_drift(runs, c.prompt_version, c.dataset_sha256, eval_config.drift, as_of=c)
     print(format_comparison(cmp))
+    print(drift_line(drift))
 
     report_path = args.html or eval_config.db_path.parent / f"report_{candidate.info.run_id}.html"
-    trend = trend_points(runs, candidate.info, eval_config.compare.trend_runs, eval_config.compare.min_judge_coverage)
+    ma = strict_moving_average(runs, c.prompt_version, c.dataset_sha256, eval_config.drift.window, as_of=c)
+    trend = trend_points(runs, c, eval_config.compare.trend_runs, eval_config.compare.min_judge_coverage, ma)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(render_report(cmp, trend, generated_at=datetime.now(UTC)), encoding="utf-8")
+    report_path.write_text(render_report(cmp, trend, generated_at=datetime.now(UTC), drift=drift), encoding="utf-8")
     print(f"\nReport: {report_path}")
 
     if not args.no_alert:
         alerter = SlackAlerter.from_env()
         if alerter is not None:
             try:
-                alerter.send(cmp, report_path)
+                alerter.send(cmp, report_path, drift)
                 print("Slack alert sent.")
             except AlertError as exc:  # an alert problem never changes the status
                 print(f"warning: {exc}", file=sys.stderr)
-    return int(cmp.status)
+    return max(int(cmp.status), drift.exit_code)  # the worse of the two
+
+
+def cmd_drift(args: argparse.Namespace) -> int:
+    eval_config = EvalConfig.from_yaml(args.eval_config)
+    runs = list_runs(eval_config.db_path)
+    drift = compute_drift(runs, args.prompt_version, file_sha256(args.dataset), eval_config.drift)
+    print(format_drift(drift))
+    return drift.exit_code
 
 
 def cmd_repeat(args: argparse.Namespace) -> int:
@@ -162,20 +177,26 @@ def cmd_repeat(args: argparse.Namespace) -> int:
 
     async def one(i: int):
         print(f"Run {i + 1}/{args.n}", file=sys.stderr, flush=True)
-        return await execute_run(
+        run = await execute_run(
             args.prompt,
             args.dataset,
             args.eval_config,
             concurrency=args.concurrency,
             limit=args.limit,
+            notes=f"repeat {i + 1}/{args.n}" if args.save else None,
             judge=False,
             classifier_client=classifier_client,
             on_progress=_progress,
             on_failure=_failure,
         )
+        if args.save:  # saved one by one, so an interrupted repeat keeps the runs it finished
+            save_run(eval_config.db_path, run)
+        return run
 
     runs = asyncio.run(repeat_runs(one, args.n))
-    print(format_spread(repeat_spread(runs), runs[0].info.prompt_version))
+    print(format_spread(repeat_spread(runs), runs[0].info.prompt_version, saved=args.save))
+    if args.save:
+        print(f"\nSaved {len(runs)} runs to {eval_config.db_path}: " + ", ".join(r.info.run_id for r in runs))
     return 0
 
 
@@ -199,20 +220,29 @@ def main(argv: list[str] | None = None) -> int:
     show.add_argument("run_id")
     show.set_defaults(func=cmd_show)
 
-    compare = sub.add_parser("compare", help="compare two runs; exit 0 PASS, 1 WARNING, 2 CRITICAL, 3 error")
+    compare = sub.add_parser("compare", help="compare two runs and show drift; exit 0 PASS, 1 WARNING, 2 CRITICAL (worse of the two), 3 error")
     compare.add_argument("--baseline", metavar="RUN_ID", help="default: most recent earlier full run on the same dataset")
     compare.add_argument("--candidate", metavar="RUN_ID", help="default: latest run")
     compare.add_argument("--html", type=Path, help="report path (default: results/report_<candidate>.html)")
     compare.add_argument("--no-alert", action="store_true", help="don't post to Slack even if SLACK_WEBHOOK_URL is set")
     compare.set_defaults(func=cmd_compare, error_exit=EXIT_ERROR)
 
-    repeat = sub.add_parser("repeat", help="run one prompt N times without the judge and report the spread")
+    drift = sub.add_parser(
+        "drift", help="7-run moving average vs the 7 runs before; exit 0 OK or not enough history, 1 WARNING, 2 CRITICAL, 3 error"
+    )
+    drift.add_argument("--prompt-version", required=True, help="e.g. v1 (the version field of the prompt file)")
+    drift.add_argument("--dataset", type=Path, default=DEFAULT_DATASET_PATH, help="default: golden/v1.json")
+    drift.set_defaults(func=cmd_drift, error_exit=EXIT_ERROR)
+
+    repeat = sub.add_parser("repeat", help="run one prompt N times without the judge and report the spread (--save to keep them)")
     repeat.add_argument("--prompt", type=Path, required=True)
     repeat.add_argument("--n", type=_positive_int, default=5, help="repetitions (>= 2, default 5)")
     repeat.add_argument("--no-judge", action="store_true", help="accepted for clarity; repeat never calls the judge")
     repeat.add_argument("--dataset", type=Path, default=DEFAULT_DATASET_PATH, help="default: golden/v1.json")
     repeat.add_argument("--concurrency", type=_positive_int, help="default: from eval_config.yaml")
     repeat.add_argument("--limit", type=_positive_int, help="only the first N cases")
+    repeat.add_argument("--save", action="store_true",
+                        help="store each run in eval.db (notes 'repeat k/N'); they count as real runs for drift")
     repeat.set_defaults(func=cmd_repeat)
 
     args = parser.parse_args(argv)
