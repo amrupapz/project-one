@@ -5,7 +5,7 @@ judge_max_tokens: 300  # caps output per judge call; without it OpenRouter reser
 judge_requests_per_minute: 15  # OpenRouter limits new accounts to 20/min on this model
 default_concurrency: 8
 db_path: results/eval.db  # relative to this file
-baseline_prompt: prompts/v1.yaml  # CI compares a NEW prompt file against the base branch's copy of this one
+baseline_prompt: prompts/v3.yaml  # CI compares a NEW prompt file against the base branch's copy of this one
 compare:  # thresholds for `python -m app.evals compare`
   strict_drop_warning_pp: 3     # strict accuracy drop (percentage points) -> WARNING
   strict_drop_critical_pp: 8    # -> CRITICAL. With 68 cases one case is ~1.5 pp.
