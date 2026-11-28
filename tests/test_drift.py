@@ -345,3 +345,36 @@ def test_alert_includes_drift_only_when_not_ok(env, monkeypatch, capsys):
     ok = compute_drift(list_runs(env["db"]), "v1", env["sha"], as_of=runs[1].info)  # not enough history
     assert "Drift" not in format_alert_text(cmp, None, ok)
     assert "Drift" not in format_alert_text(cmp, None)
+
+
+# --- HTML report -----------------------------------------------------------------------------
+
+def test_html_report_shows_drift_line_and_dashed_moving_average(env, capsys):
+    runs = save_series(env, [190 - i for i in range(14)])
+    assert compare_cli(env) == 1
+    html = (env["db"].parent / f"report_{runs[-1].info.run_id}.html").read_text(encoding="utf-8")
+    assert '<p class="drift">Drift (7-run average): DRIFT WARNING (strict 90.0% vs 93.5%' in html
+    assert html.count('<polyline class="ma"') == 1  # only on the strict chart
+    assert "Dashed: 7-run moving average of prompt v1" in html
+    # Trend shows the last 10 runs (r004..r013); runs r006 onward have a full 7-run window.
+    assert "<th class=\"num\">7-run avg</th>" in html
+    assert html.count("not judged</td><td class=\"num\">–</td></tr>") == 2  # r004, r005: no moving average yet
+    assert "<td class=\"num\">90.0%</td></tr>" in html  # r013: mean of r007..r013
+
+
+def test_html_report_without_history_has_no_moving_average(env, capsys):
+    runs = save_series(env, [180, 179])
+    assert compare_cli(env) == 0
+    html = (env["db"].parent / f"report_{runs[-1].info.run_id}.html").read_text(encoding="utf-8")
+    assert "NOT ENOUGH HISTORY (have 2, need 14)" in html
+    assert 'class="ma"' not in html and "run avg" not in html
+
+
+def test_moving_average_skips_other_prompt_points(tmp_path):
+    from app.evals.report_html import trend_points
+    evals = corrects_to_runs([180] * 8) + [make_run(8, 100, prompt_version="v2")] + [make_run(9, 180)]
+    runs = store(tmp_path, evals)
+    ma = strict_moving_average(runs, "v1", DATASET, window=7)
+    points = trend_points(runs, evals[-1].info, limit=10, moving_average=ma)
+    assert [p.prompt_version for p in points][8] == "v2" and points[8].ma is None
+    assert [p.ma is not None for p in points] == [False] * 6 + [True, True, False, True]

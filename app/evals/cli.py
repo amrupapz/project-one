@@ -13,7 +13,7 @@ from app.errors import MissingAPIKeyError
 from app.evals.alerts import AlertError, SlackAlerter
 from app.evals.compare import compare_runs, format_comparison
 from app.evals.config import DEFAULT_EVAL_CONFIG_PATH, REPO_ROOT, EvalConfig, file_sha256
-from app.evals.drift import compute_drift, drift_line, format_drift
+from app.evals.drift import compute_drift, drift_line, format_drift, strict_moving_average
 from app.evals.judge_client import make_judge_client
 from app.evals.repeat import format_spread, repeat_runs, repeat_spread
 from app.evals.report_html import render_report, trend_points
@@ -143,9 +143,10 @@ def cmd_compare(args: argparse.Namespace) -> int:
     print(drift_line(drift))
 
     report_path = args.html or eval_config.db_path.parent / f"report_{candidate.info.run_id}.html"
-    trend = trend_points(runs, candidate.info, eval_config.compare.trend_runs, eval_config.compare.min_judge_coverage)
+    ma = strict_moving_average(runs, c.prompt_version, c.dataset_sha256, eval_config.drift.window, as_of=c)
+    trend = trend_points(runs, c, eval_config.compare.trend_runs, eval_config.compare.min_judge_coverage, ma)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(render_report(cmp, trend, generated_at=datetime.now(UTC)), encoding="utf-8")
+    report_path.write_text(render_report(cmp, trend, generated_at=datetime.now(UTC), drift=drift), encoding="utf-8")
     print(f"\nReport: {report_path}")
 
     if not args.no_alert:
