@@ -69,10 +69,10 @@ def repeat_spread(runs: list[EvalRun]) -> RepeatSpread:
     return RepeatSpread(accuracies=accuracies, case_count=len(ids), unstable=unstable)
 
 
-def format_spread(spread: RepeatSpread, prompt_version: str) -> str:
+def format_spread(spread: RepeatSpread, prompt_version: str, saved: bool = False) -> str:
     n = len(spread.accuracies)
     lines = [
-        f"Repeat: prompt {prompt_version}, {n} runs x {spread.case_count} cases (no judge, not saved)",
+        f"Repeat: prompt {prompt_version}, {n} runs x {spread.case_count} cases (no judge, " + ("saved" if saved else "not saved") + ")",
         "Strict accuracy per run: " + ", ".join(f"{a:.1%}" for a in spread.accuracies),
         f"Mean {spread.mean:.1%}  stdev {spread.stdev * 100:.2f} pp  "
         f"min {min(spread.accuracies):.1%}  max {max(spread.accuracies):.1%}  spread {spread.spread_pp:.1f} pp",

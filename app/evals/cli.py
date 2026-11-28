@@ -103,10 +103,12 @@ def cmd_list(args: argparse.Namespace) -> int:
     print(header)
     for r in runs:
         partial = f"  PARTIAL RUN (limit {r.info.case_limit})" if r.info.is_partial else ""
+        notes = r.info.notes or ""
+        notes = f"  {notes[:40]}{'…' if len(notes) > 40 else ''}" if notes else ""
         print(
             f"{r.info.run_id:<22} {r.info.started_at:%Y-%m-%d %H:%M:%S} {r.info.prompt_version:<7} "
             f"{r.info.classifier_model:<28} {r.case_count:>5} {_acc(r.strict_accuracy):>7} "
-            f"{_acc(r.acceptable_accuracy):>7} {r.errors:>6}{partial}"
+            f"{_acc(r.acceptable_accuracy):>7} {r.errors:>6}{partial}{notes}"
         )
     return 0
 
@@ -175,20 +177,26 @@ def cmd_repeat(args: argparse.Namespace) -> int:
 
     async def one(i: int):
         print(f"Run {i + 1}/{args.n}", file=sys.stderr, flush=True)
-        return await execute_run(
+        run = await execute_run(
             args.prompt,
             args.dataset,
             args.eval_config,
             concurrency=args.concurrency,
             limit=args.limit,
+            notes=f"repeat {i + 1}/{args.n}" if args.save else None,
             judge=False,
             classifier_client=classifier_client,
             on_progress=_progress,
             on_failure=_failure,
         )
+        if args.save:  # saved one by one, so an interrupted repeat keeps the runs it finished
+            save_run(eval_config.db_path, run)
+        return run
 
     runs = asyncio.run(repeat_runs(one, args.n))
-    print(format_spread(repeat_spread(runs), runs[0].info.prompt_version))
+    print(format_spread(repeat_spread(runs), runs[0].info.prompt_version, saved=args.save))
+    if args.save:
+        print(f"\nSaved {len(runs)} runs to {eval_config.db_path}: " + ", ".join(r.info.run_id for r in runs))
     return 0
 
 
@@ -226,13 +234,15 @@ def main(argv: list[str] | None = None) -> int:
     drift.add_argument("--dataset", type=Path, default=DEFAULT_DATASET_PATH, help="default: golden/v1.json")
     drift.set_defaults(func=cmd_drift, error_exit=EXIT_ERROR)
 
-    repeat = sub.add_parser("repeat", help="run one prompt N times without the judge and report the spread")
+    repeat = sub.add_parser("repeat", help="run one prompt N times without the judge and report the spread (--save to keep them)")
     repeat.add_argument("--prompt", type=Path, required=True)
     repeat.add_argument("--n", type=_positive_int, default=5, help="repetitions (>= 2, default 5)")
     repeat.add_argument("--no-judge", action="store_true", help="accepted for clarity; repeat never calls the judge")
     repeat.add_argument("--dataset", type=Path, default=DEFAULT_DATASET_PATH, help="default: golden/v1.json")
     repeat.add_argument("--concurrency", type=_positive_int, help="default: from eval_config.yaml")
     repeat.add_argument("--limit", type=_positive_int, help="only the first N cases")
+    repeat.add_argument("--save", action="store_true",
+                        help="store each run in eval.db (notes 'repeat k/N'); they count as real runs for drift")
     repeat.set_defaults(func=cmd_repeat)
 
     args = parser.parse_args(argv)

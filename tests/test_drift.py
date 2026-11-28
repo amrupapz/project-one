@@ -378,3 +378,58 @@ def test_moving_average_skips_other_prompt_points(tmp_path):
     points = trend_points(runs, evals[-1].info, limit=10, moving_average=ma)
     assert [p.prompt_version for p in points][8] == "v2" and points[8].ma is None
     assert [p.ma is not None for p in points] == [False] * 6 + [True, True, False, True]
+
+
+# --- repeat --save ---------------------------------------------------------------------------
+
+def test_cli_repeat_save_stores_labelled_runs_that_count_for_drift(monkeypatch, capsys, tmp_path):
+    from app.evals import load_run
+    from tests.conftest import VALID_PROMPT
+    from tests.golden_fixtures import fixture_case, fixture_dataset, write_json
+    from tests.test_evals import classifier_reply, fake_client
+
+    prompt = tmp_path / "v1.yaml"
+    prompt.write_text(yaml.safe_dump(VALID_PROMPT), encoding="utf-8")
+    dataset = write_json(tmp_path / "v1.json", fixture_dataset(fixture_case(1, expected_category="billing")))
+    config = tmp_path / "eval_config.yaml"
+    config.write_text(yaml.safe_dump({"judge_model": "anthropic/claude-haiku-4.5", "default_concurrency": 1,
+                                      "judge_rubric": RUBRIC, "db_path": "results/eval.db",
+                                      "drift": {"window": 2, "min_history": 4}}), encoding="utf-8")
+    db = tmp_path / "results" / "eval.db"
+
+    async def classify_handler(kwargs):
+        return classifier_reply("billing")
+
+    classifier, calls = fake_client(monkeypatch, classify_handler)
+    monkeypatch.setattr("app.evals.cli.make_client", lambda: classifier)
+    monkeypatch.setattr("app.evals.cli.make_judge_client", lambda c: pytest.fail("repeat must not judge"))
+    base = ["--eval-config", str(config)]
+    repeat = [*base, "repeat", "--prompt", str(prompt), "--dataset", str(dataset), "--n", "3"]
+
+    assert evals_main(repeat) == 0  # default: not saved
+    assert "(no judge, not saved)" in capsys.readouterr().out and not db.exists()
+
+    assert evals_main([*repeat, "--save"]) == 0
+    out = capsys.readouterr().out
+    assert "(no judge, saved)" in out and f"Saved 3 runs to {db}" in out
+    ids = out.strip().rsplit(": ", 1)[1].split(", ")
+    stored = [load_run(db, i).info for i in ids]
+    assert [i.notes for i in stored] == ["repeat 1/3", "repeat 2/3", "repeat 3/3"]
+    assert not any(i.judge_enabled or i.is_partial for i in stored)
+
+    assert evals_main([*base, "list"]) == 0
+    listing = capsys.readouterr().out
+    for k in (1, 2, 3):
+        assert f"repeat {k}/3" in listing
+
+    drift = [*base, "drift", "--prompt-version", "v1", "--dataset", str(dataset)]
+    assert evals_main(drift) == 0
+    assert "have 3, need 4" in capsys.readouterr().out
+    assert evals_main([*repeat, "--n", "2", "--save"]) == 0
+    capsys.readouterr()
+    assert evals_main(drift) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("STATUS: OK") and "Judge score not shown" in out  # repeat runs are never judged
+
+    assert evals_main([*repeat, "--n", "1", "--save"]) == 1  # rejected before anything runs or is saved
+    assert len(list_runs(db)) == 5
