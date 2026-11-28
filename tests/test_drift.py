@@ -1,18 +1,22 @@
 """Slow-drift detection: window math, run selection, thresholds, CLI, report, alerts. No API calls."""
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from app.evals import EvalRun, save_run
+from app.evals.alerts import format_alert_text
+from app.evals.cli import main as evals_main
 from app.evals.compare import Status, compare_runs
-from app.evals.config import DriftConfig, EvalConfig
+from app.evals.config import DriftConfig, EvalConfig, file_sha256
 from app.evals.drift import DriftStatus, compute_drift, drift_line, format_drift, strict_moving_average
 from app.evals.store import list_runs
-from tests.test_evals import make_case, make_info
+from tests.test_evals import RUBRIC, make_case, make_info
 
 T0 = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
 DATASET = "b" * 64  # make_info's default dataset_sha256
@@ -240,3 +244,104 @@ def test_repo_eval_config_has_drift_section():
     drift = EvalConfig.from_yaml(DEFAULT_EVAL_CONFIG_PATH).drift
     assert (drift.window, drift.min_history, drift.drop_warning_pp, drift.drop_critical_pp) == (7, 14, 2.0, 4.0)
     assert drift.floor_strict_pct is None
+
+
+# --- CLI, exit codes, alerts -----------------------------------------------------------------
+
+@pytest.fixture
+def env(tmp_path: Path, monkeypatch) -> dict[str, Any]:
+    monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
+    config = tmp_path / "eval_config.yaml"
+    config.write_text(yaml.safe_dump({
+        "judge_model": "anthropic/claude-haiku-4.5", "judge_rubric": RUBRIC, "db_path": "results/eval.db",
+    }), encoding="utf-8")
+    dataset = tmp_path / "v1.json"
+    dataset.write_text('{"FIXTURE": "dataset file; only its sha256 is used"}', encoding="utf-8")
+    return {"config": config, "dataset": dataset, "db": tmp_path / "results" / "eval.db",
+            "sha": file_sha256(dataset)}
+
+
+def save_series(env, corrects: list[int], **kw: Any) -> list[EvalRun]:
+    runs = [make_run(i, c, dataset_sha256=env["sha"], **kw) for i, c in enumerate(corrects)]
+    for r in runs:
+        save_run(env["db"], r)
+    return runs
+
+
+def drift_cli(env, *extra: str) -> int:
+    return evals_main(["--eval-config", str(env["config"]), "drift", "--prompt-version", "v1",
+                       "--dataset", str(env["dataset"]), *extra])
+
+
+@pytest.mark.parametrize(("corrects", "code", "label"), [
+    ([180] * 5, 0, "NOT ENOUGH HISTORY"),
+    ([180] * 14, 0, "OK"),
+    ([190 - i for i in range(14)], 1, "DRIFT WARNING"),
+    ([180] * 7 + [170] * 7, 2, "DRIFT CRITICAL"),
+])
+def test_cli_drift_exit_codes(env, capsys, corrects, code, label):
+    runs = save_series(env, corrects)
+    assert drift_cli(env) == code
+    out = capsys.readouterr().out
+    assert out.startswith(f"STATUS: {label}\n")
+    if label == "NOT ENOUGH HISTORY":
+        assert "Not enough history (have 5, need 14" in out
+    else:
+        assert "Window (7 runs, newest last): " + ", ".join(r.info.run_id for r in runs[-7:]) in out
+        assert "Reference (7 runs): " + ", ".join(r.info.run_id for r in runs[-14:-7]) in out
+
+
+def test_cli_drift_empty_db_and_other_dataset(env, capsys):
+    assert drift_cli(env) == 0
+    assert "have 0, need 14" in capsys.readouterr().out
+    save_series(env, [180] * 7 + [100] * 7)
+    other = env["dataset"].with_name("v2.json")
+    other.write_text("{}", encoding="utf-8")
+    assert drift_cli(env, "--dataset", str(other)) == 0  # different dataset file: no history
+    assert drift_cli(env, "--dataset", str(other.with_name("missing.json"))) == 3
+
+
+def compare_cli(env) -> int:
+    return evals_main(["--eval-config", str(env["config"]), "compare", "--no-alert"])
+
+
+def test_cli_compare_pass_but_drift_warning_exits_1(env, capsys):
+    save_series(env, [190 - i for i in range(14)])
+    assert compare_cli(env) == 1
+    out = capsys.readouterr().out
+    assert "STATUS: PASS (strict -0.5 pp" in out
+    assert "Drift (7-run average): DRIFT WARNING (strict 90.0% vs 93.5%" in out
+
+
+def test_cli_compare_takes_the_worse_status(env, capsys):
+    save_series(env, [180] * 13 + [160])  # last run: 10 pp drop -> compare CRITICAL; drift 1.4 pp -> OK
+    assert compare_cli(env) == 2
+    assert "Drift (7-run average): OK" in capsys.readouterr().out
+
+
+def test_cli_compare_without_history_is_unchanged(env, capsys):
+    save_series(env, [180, 180])
+    assert compare_cli(env) == 0
+    assert "Drift (7-run average): NOT ENOUGH HISTORY (have 2, need 14)" in capsys.readouterr().out
+
+
+def test_cli_compare_drift_is_as_of_the_candidate(env, capsys):
+    runs = save_series(env, [180] * 14 + [100] * 7)
+    code = evals_main(["--eval-config", str(env["config"]), "compare", "--no-alert",
+                       "--baseline", runs[12].info.run_id, "--candidate", runs[13].info.run_id])
+    assert code == 0 and "Drift (7-run average): OK" in capsys.readouterr().out
+
+
+def test_alert_includes_drift_only_when_not_ok(env, monkeypatch, capsys):
+    runs = save_series(env, [190 - i for i in range(14)])
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", "https://hooks.slack.invalid/T/B/X")
+    sent: list[dict] = []
+    monkeypatch.setattr("app.evals.alerts._urllib_post",
+                        lambda url, body, headers, timeout: sent.append(json.loads(body)) or 200)
+    assert evals_main(["--eval-config", str(env["config"]), "compare"]) == 1
+    assert "Drift (7-run average): DRIFT WARNING" in sent[0]["text"]
+
+    cmp = compare_runs(runs[0], runs[1])
+    ok = compute_drift(list_runs(env["db"]), "v1", env["sha"], as_of=runs[1].info)  # not enough history
+    assert "Drift" not in format_alert_text(cmp, None, ok)
+    assert "Drift" not in format_alert_text(cmp, None)

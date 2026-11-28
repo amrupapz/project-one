@@ -1,4 +1,4 @@
-"""python -m app.evals {run,list,show,compare,repeat}"""
+"""python -m app.evals {run,list,show,compare,drift,repeat}"""
 
 import argparse
 import asyncio
@@ -12,7 +12,8 @@ from pydantic import ValidationError
 from app.errors import MissingAPIKeyError
 from app.evals.alerts import AlertError, SlackAlerter
 from app.evals.compare import compare_runs, format_comparison
-from app.evals.config import DEFAULT_EVAL_CONFIG_PATH, REPO_ROOT, EvalConfig
+from app.evals.config import DEFAULT_EVAL_CONFIG_PATH, REPO_ROOT, EvalConfig, file_sha256
+from app.evals.drift import compute_drift, drift_line, format_drift
 from app.evals.judge_client import make_judge_client
 from app.evals.repeat import format_spread, repeat_runs, repeat_spread
 from app.evals.report_html import render_report, trend_points
@@ -136,7 +137,10 @@ def cmd_compare(args: argparse.Namespace) -> int:
         baseline = load_run(eval_config.db_path, default.run_id)
 
     cmp = compare_runs(baseline, candidate, eval_config.compare)
+    c = candidate.info
+    drift = compute_drift(runs, c.prompt_version, c.dataset_sha256, eval_config.drift, as_of=c)
     print(format_comparison(cmp))
+    print(drift_line(drift))
 
     report_path = args.html or eval_config.db_path.parent / f"report_{candidate.info.run_id}.html"
     trend = trend_points(runs, candidate.info, eval_config.compare.trend_runs, eval_config.compare.min_judge_coverage)
@@ -148,11 +152,19 @@ def cmd_compare(args: argparse.Namespace) -> int:
         alerter = SlackAlerter.from_env()
         if alerter is not None:
             try:
-                alerter.send(cmp, report_path)
+                alerter.send(cmp, report_path, drift)
                 print("Slack alert sent.")
             except AlertError as exc:  # an alert problem never changes the status
                 print(f"warning: {exc}", file=sys.stderr)
-    return int(cmp.status)
+    return max(int(cmp.status), drift.exit_code)  # the worse of the two
+
+
+def cmd_drift(args: argparse.Namespace) -> int:
+    eval_config = EvalConfig.from_yaml(args.eval_config)
+    runs = list_runs(eval_config.db_path)
+    drift = compute_drift(runs, args.prompt_version, file_sha256(args.dataset), eval_config.drift)
+    print(format_drift(drift))
+    return drift.exit_code
 
 
 def cmd_repeat(args: argparse.Namespace) -> int:
@@ -199,12 +211,19 @@ def main(argv: list[str] | None = None) -> int:
     show.add_argument("run_id")
     show.set_defaults(func=cmd_show)
 
-    compare = sub.add_parser("compare", help="compare two runs; exit 0 PASS, 1 WARNING, 2 CRITICAL, 3 error")
+    compare = sub.add_parser("compare", help="compare two runs and show drift; exit 0 PASS, 1 WARNING, 2 CRITICAL (worse of the two), 3 error")
     compare.add_argument("--baseline", metavar="RUN_ID", help="default: most recent earlier full run on the same dataset")
     compare.add_argument("--candidate", metavar="RUN_ID", help="default: latest run")
     compare.add_argument("--html", type=Path, help="report path (default: results/report_<candidate>.html)")
     compare.add_argument("--no-alert", action="store_true", help="don't post to Slack even if SLACK_WEBHOOK_URL is set")
     compare.set_defaults(func=cmd_compare, error_exit=EXIT_ERROR)
+
+    drift = sub.add_parser(
+        "drift", help="7-run moving average vs the 7 runs before; exit 0 OK or not enough history, 1 WARNING, 2 CRITICAL, 3 error"
+    )
+    drift.add_argument("--prompt-version", required=True, help="e.g. v1 (the version field of the prompt file)")
+    drift.add_argument("--dataset", type=Path, default=DEFAULT_DATASET_PATH, help="default: golden/v1.json")
+    drift.set_defaults(func=cmd_drift, error_exit=EXIT_ERROR)
 
     repeat = sub.add_parser("repeat", help="run one prompt N times without the judge and report the spread")
     repeat.add_argument("--prompt", type=Path, required=True)

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Protocol
 
 from app.evals.compare import Comparison
+from app.evals.drift import Drift, DriftStatus, drift_line
 
 SLACK_WEBHOOK_ENV = "SLACK_WEBHOOK_URL"
 TIMEOUT_S = 10.0
@@ -24,7 +25,7 @@ class AlertError(RuntimeError):
 
 
 class Alerter(Protocol):
-    def send(self, comparison: Comparison, report_path: Path | None) -> None: ...
+    def send(self, comparison: Comparison, report_path: Path | None, drift: Drift | None = None) -> None: ...
 
 
 def _urllib_post(url: str, body: bytes, headers: dict[str, str], timeout: float) -> int:
@@ -33,7 +34,7 @@ def _urllib_post(url: str, body: bytes, headers: dict[str, str], timeout: float)
         return response.status
 
 
-def format_alert_text(cmp: Comparison, report_path: Path | None) -> str:
+def format_alert_text(cmp: Comparison, report_path: Path | None, drift: Drift | None = None) -> str:
     def pp(change: float | None) -> str:
         return "n/a" if change is None else f"{change * 100:+.1f} pp"
 
@@ -49,6 +50,8 @@ def format_alert_text(cmp: Comparison, report_path: Path | None) -> str:
         f"Acceptable flips: {len(cmp.acceptable_regressions)} regressions, {len(cmp.acceptable_improvements)} improvements",
     ]
     lines += [f"Warning: {w}" for w in cmp.warnings]
+    if drift is not None and drift.status not in (None, DriftStatus.OK):  # only when there is something to say
+        lines.append(drift_line(drift))
     if report_path is not None:
         lines.append(f"Report: {report_path}")
     return "\n".join(lines)
@@ -64,8 +67,8 @@ class SlackAlerter:
         url = os.environ.get(SLACK_WEBHOOK_ENV, "").strip()
         return cls(url, post) if url else None
 
-    def send(self, comparison: Comparison, report_path: Path | None) -> None:
-        body = json.dumps({"text": format_alert_text(comparison, report_path)}).encode("utf-8")
+    def send(self, comparison: Comparison, report_path: Path | None, drift: Drift | None = None) -> None:
+        body = json.dumps({"text": format_alert_text(comparison, report_path, drift)}).encode("utf-8")
         try:
             status = self._post(self.webhook_url, body, {"Content-Type": "application/json"}, TIMEOUT_S)
         except OSError as exc:  # URLError, HTTPError and timeouts are all OSError
